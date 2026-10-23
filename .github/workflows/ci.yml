@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  TARGET: thumbv6m-none-eabi
+
+jobs:
+  build:
+    name: build / test / lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # cw32l012-pac 尚未发布到 crates.io：按目录名克隆到上一级，
+      # 让 `path = "../cw32l012-pac"` 依赖成立。
+      - name: Checkout cw32l012-pac (sibling path dependency)
+        run: git clone --depth 1 https://github.com/SunWithCloude/Cw32l012_pac.git "$GITHUB_WORKSPACE/../cw32l012-pac"
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv6m-none-eabi
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # 裸机目标：库 + 两个示例，任何警告都算失败
+      - name: clippy (thumbv6m, rt, examples)
+        run: cargo clippy --target $TARGET --release --features rt --examples -- -D warnings
+
+      - name: build (thumbv6m, rt, examples)
+        run: cargo build --target $TARGET --release --features rt --examples
+
+      # 宿主机测试（dev-dependencies 已按目标门控，不会拉 cortex-m 平台代码）
+      - name: host tests
+        run: cargo test
+
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout cw32l012-pac (sibling path dependency)
+        run: git clone --depth 1 https://github.com/SunWithCloude/Cw32l012_pac.git "$GITHUB_WORKSPACE/../cw32l012-pac"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo doc
+        run: cargo doc --no-deps --features rt

@@ -1,0 +1,52 @@
+[package]
+name = "embassy-cw32"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "embassy async HAL for the CW32L012 Cortex-M0+ MCU (Wuhan Xinyuan / CMSemicon)"
+categories = ["embedded", "hardware-support", "no-std", "async"]
+keywords = ["cw32", "cw32l012", "embassy", "async", "embedded"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/SunWithCloude/Cw32l012_embassy"
+
+[package.metadata.docs.rs]
+default-target = "thumbv6m-none-eabi"
+targets = ["thumbv6m-none-eabi"]
+
+[dependencies]
+cw32l012-pac = { path = "../cw32l012-pac", version = "0.2", default-features = false }
+critical-section = { version = "1.2", features = ["restore-state-u8"] }
+embassy-sync = "0.8"
+embassy-time = "0.5"
+# 时间驱动固定 1MHz tick（与 embassy-time 默认 tick-hz-1_000_000 一致）
+embassy-time-driver = { version = "0.2", features = ["tick-hz-1_000_000"] }
+# 定时器队列容量 64（可按需改用 generic-queue-8/16/128/256）
+embassy-time-queue-utils = { version = "0.3", features = ["generic-queue-64"] }
+embassy-futures = "0.1"
+embedded-hal = "1"
+embedded-hal-async = "1"
+embedded-io-async = "0.7"
+
+[features]
+default = ["critical-section-impl"]
+# PRIMASK 关中断实现 critical-section（单核 M0+）。
+# 一个固件只能有一个实现：不要与 cw32l012-hal 的 critical-section-impl
+# 或 cortex-m 的实现同时启用（链接冲突）。
+critical-section-impl = []
+# 透传 PAC 的 rt feature（cortex-m-rt 向量表），示例与正式固件都需要。
+rt = ["cw32l012-pac/rt"]
+
+# 示例依赖仅对 ARM 裸机目标启用（宿主机 cargo test 不拉取，
+# 否则 cortex-m 平台代码在 x86 上编译失败）
+[target.'cfg(all(target_arch = "arm", target_os = "none"))'.dev-dependencies]
+embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
+cortex-m-rt = { version = "0.7", features = ["device"] }
+
+[[example]]
+name = "blink_async"
+required-features = ["rt"]
+
+[[example]]
+name = "uart_echo_async"
+required-features = ["rt"]

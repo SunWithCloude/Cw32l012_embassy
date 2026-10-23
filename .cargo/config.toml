@@ -1,0 +1,7 @@
+# 示例 / 测试的交叉编译配置（thumbv6m-none-eabi = Cortex-M0+ 裸机）。
+# thumb* 目标默认用 rust-lld（self-contained），无需外部工具链。
+# link.x 会自动 INCLUDE memory.x 与 device.x（构建脚本已暴露搜索路径）。
+[target.thumbv6m-none-eabi]
+rustflags = [
+    "-C", "link-arg=-Tlink.x",
+]
