@@ -2,6 +2,35 @@
 
 遵循 SemVer；格式参考 Keep a Changelog。
 
+## [0.3.0] - 2026-10-24
+
+### 新增
+
+- **多家族支持(feature 互斥)**:`cw32l012`(默认)与 `cw32f030`(CW32F030/
+  CW32A030 寄存器兼容)。`rt` 经弱依赖 feature 透传给所选家族。
+- `blink_async_f030` 示例;F030 实板验证(执行器 + 时间驱动 + 异步任务 +
+  GPIO,PC13 精确 500ms 翻转)。
+- `GpioPort` 功能式端口特征(`rd`/`wr`/`mod_` + `Reg` 枚举):隔离两套
+  PAC 的字段访问类型差异;`Pin<P>` 泛型化。F030 三种端口结构体分别建模
+  (GPIOA/B 全量、GPIOC 仅 AFRH、GPIOF 仅 AFRL)。
+- UART 家族位常量面:TXBE/TC/RC 两代共用;错误位/时钟门控/ICR 清除
+  按家族(F030 经典:FE3/PE4、UART1=APBEN2.9 等;ICR 同为 R1W0,依据
+  厂商库 `REGBITS_CLR(ICR, flag)`)。
+- `nvic_enable::<typelevel>()`:统一走 typelevel 中断号(两套 PAC 的
+  枚举变体命名不同)。
+
+### 修复
+
+- F030 复位默认时钟为 **8MHz**(HSI 48M/6),非 48MHz——48M 假设下
+  SysTick 慢 6 倍、blink 周期 6 秒;上板排障发现,DFP `Dclock=8000000`
+  佐证。
+- 生成器(cw32-pac-gen):IRQ 名全族退化 RESERVED 的 dict 键序 bug;
+  头文件宏补全 UART2/UART3/GPIOB 实例;位段常量输出。
+
+### 变更
+
+- i2c/spi 暂为 L012 专属(经典家族外设不同,路线图)。
+
 ## [0.2.0] - 2026-10-24
 
 ### 新增
