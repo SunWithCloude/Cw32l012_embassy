@@ -153,6 +153,11 @@ impl Spi {
         };
         let lsbf = if config.msb_first { 0 } else { sb::CR1_LSBF };
 
+        // 使能 NVIC 中断线（v0.1 遗漏修复）
+        match idx {
+            0 => crate::pac::Interrupt::Spi1.enable(),
+            _ => crate::pac::Interrupt::Spi23.enable(),
+        }
         regs.cr2.write(0); // EN=0 时才能写 CR1
         regs.cr1
             .write((br << sb::CR1_BR_POS) | sb::CR1_MSTR | sb::CR1_SSM | cpol | cpha | lsbf);

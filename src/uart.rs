@@ -14,6 +14,8 @@
 use core::future::poll_fn;
 use core::task::Poll;
 
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::pipe::Pipe;
 use embassy_sync::waitqueue::AtomicWaker;
 use embedded_io_async as embedded_io;
 
@@ -185,6 +187,14 @@ impl Uart {
         // 清残留错误标志（R1W0：对应位写 0）
         regs.icr.write(ub::ICR_CLEAR_RX_ERRORS);
 
+        // v0.1 遗漏修复：使能 NVIC 中断线（向量有了但 ISER 没开，
+        // 任何 UART 中断都进不来——2026-10-24 移植缓冲驱动时发现）
+        match idx {
+            0 => crate::pac::Interrupt::Uart1.enable(),
+            1 => crate::pac::Interrupt::Uart2.enable(),
+            _ => crate::pac::Interrupt::Uart3.enable(),
+        }
+
         Self { regs, idx }
     }
 
@@ -352,10 +362,289 @@ impl embedded_io_async::Read for UartRx {
     }
 }
 
+// ================= 缓冲式 UART（设计吸收自 fan2nd/cw32-hal2） =================
+
+/// 缓冲收发容量（字节，收/发各一份，三个实例共用规格）
+pub const BUFFER_CAPACITY: usize = 64;
+
+/// 缓冲模式标记（IRQ 派发据此选择缓冲排空或逐字节唤醒路径）
+static BUFFERED: [core::sync::atomic::AtomicBool; 3] =
+    [const { core::sync::atomic::AtomicBool::new(false) }; 3];
+
+/// 收/发管道（IRQ 生产 RX、排空 TX；任务侧 await 读写）
+static RX_PIPE: [Pipe<CriticalSectionRawMutex, BUFFER_CAPACITY>; 3] =
+    [const { Pipe::new() }; 3];
+static TX_PIPE: [Pipe<CriticalSectionRawMutex, BUFFER_CAPACITY>; 3] =
+    [const { Pipe::new() }; 3];
+
+/// 发送活跃标记（kick 置位，IRQ 排空后清零）
+static TX_ACTIVE: [core::sync::atomic::AtomicBool; 3] =
+    [const { core::sync::atomic::AtomicBool::new(false) }; 3];
+
+/// flush 等待者（TC 到点时唤醒）
+static FLUSH_WAKER: [AtomicWaker; 3] = [const { AtomicWaker::new() }; 3];
+
+/// 缓冲模式下被丢弃/出错的接收计数（诊断用）
+static RX_DROPPED: [core::sync::atomic::AtomicU32; 3] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; 3];
+
+/// 缓冲式 UART：后台环形缓冲收发。
+///
+/// 接收方向 IRQ 常开（含错误位），数据进 RX 管道，多任务并发读；
+/// 发送方向写入 TX 管道后 kick 一次，IRQ 排空到 TDR，`flush` 等 TC。
+///
+/// 设计吸收自 [fan2nd/cw32-hal2](https://github.com/fan2nd/cw32-hal2)
+/// （MIT OR Apache-2.0）的 buffered USART：IER 单发屏蔽、R1W0 清标志
+/// 纪律、写 TDR 前清 TC 防陈旧标志误触 flush；环形缓冲改用
+/// embassy-sync `Pipe` 实现。
+pub struct BufferedUart {
+    regs: &'static pac::Uart,
+    idx: usize,
+}
+
+/// 缓冲式发送半部
+pub struct BufferedUartTx {
+    regs: &'static pac::Uart,
+    idx: usize,
+}
+
+/// 缓冲式接收半部
+pub struct BufferedUartRx {
+    idx: usize,
+}
+
+impl BufferedUart {
+    /// 初始化 UART1 缓冲式驱动（8-N-1）。
+    pub fn new_uart1(
+        regs: &'static pac::Uart,
+        tx: Pin,
+        rx: Pin,
+        af: u8,
+        _irqs: impl Binding<interrupt::UART1>,
+        config: Config,
+    ) -> Self {
+        let _ = Uart::new_inner(regs, tx, rx, af, config);
+        Self::finish(regs, 0)
+    }
+
+    /// 初始化 UART2 缓冲式驱动。
+    pub fn new_uart2(
+        regs: &'static pac::Uart,
+        tx: Pin,
+        rx: Pin,
+        af: u8,
+        _irqs: impl Binding<interrupt::UART2>,
+        config: Config,
+    ) -> Self {
+        let _ = Uart::new_inner(regs, tx, rx, af, config);
+        Self::finish(regs, 1)
+    }
+
+    /// 初始化 UART3 缓冲式驱动。
+    pub fn new_uart3(
+        regs: &'static pac::Uart,
+        tx: Pin,
+        rx: Pin,
+        af: u8,
+        _irqs: impl Binding<interrupt::UART3>,
+        config: Config,
+    ) -> Self {
+        let _ = Uart::new_inner(regs, tx, rx, af, config);
+        Self::finish(regs, 2)
+    }
+
+    /// 缓冲模式收尾：置标记 + 常开接收中断
+    fn finish(regs: &'static pac::Uart, idx: usize) -> Self {
+        BUFFERED[idx].store(true, core::sync::atomic::Ordering::Relaxed);
+        regs.ier.write(
+            ub::ISR_RC | ub::ISR_ORE | ub::ISR_NE | ub::ISR_PE | ub::ISR_FE,
+        );
+        Self { regs, idx }
+    }
+
+    /// 拆分收发半部（管道是全局静态，两半部可分属不同任务）
+    pub fn split(self) -> (BufferedUartTx, BufferedUartRx) {
+        (
+            BufferedUartTx { regs: self.regs, idx: self.idx },
+            BufferedUartRx { idx: self.idx },
+        )
+    }
+
+    /// 缓冲区内已有的接收字节数（可非阻塞窥视）
+    pub fn rx_ready(&self) -> usize {
+        RX_PIPE[self.idx].len()
+    }
+
+    /// 被丢弃的接收字节计数（缓冲满或错误，诊断用）
+    pub fn rx_dropped(&self) -> u32 {
+        RX_DROPPED[self.idx].load(core::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl BufferedUartTx {
+    /// 写入发送管道并 kick 后台排空
+    pub async fn write(&mut self, buf: &[u8]) {
+        TX_PIPE[self.idx].write_all(buf).await;
+        self.kick();
+    }
+
+    /// kick：置活跃标记并打开 TXBE 中断（若已在排空则无事可做）
+    fn kick(&self) {
+        critical_section::with(|_| {
+            if !TX_ACTIVE[self.idx].load(core::sync::atomic::Ordering::Relaxed) {
+                TX_ACTIVE[self.idx].store(true, core::sync::atomic::Ordering::Relaxed);
+                self.regs.ier.modify(|v| v | ub::ISR_TXBE);
+                // TXBE 可能已置位（管道有货就该马上发），立即排一次
+                buffered_tx_drain(self.idx, self.regs);
+            }
+        });
+    }
+
+    /// 等待全部发出（管道空 + TC 置位）
+    pub async fn flush(&mut self) {
+        poll_fn(|cx| {
+            FLUSH_WAKER[self.idx].register(cx.waker());
+            if TX_PIPE[self.idx].is_empty() && self.regs.isr.read() & ub::ISR_TC != 0 {
+                Poll::Ready(())
+            } else {
+                self.regs.ier.modify(|v| v | ub::ISR_TC);
+                Poll::Pending
+            }
+        })
+        .await;
+    }
+}
+
+impl BufferedUartRx {
+    /// 读至少 1 字节（阻塞到有数据）
+    pub async fn read(&mut self, buf: &mut [u8]) -> usize {
+        RX_PIPE[self.idx].read(buf).await
+    }
+
+    /// 缓冲区内已有的接收字节数
+    pub fn ready(&self) -> usize {
+        RX_PIPE[self.idx].len()
+    }
+}
+
+impl embedded_io::ErrorType for BufferedUart {
+    type Error = UartError;
+}
+impl embedded_io::ErrorType for BufferedUartTx {
+    type Error = UartError;
+}
+impl embedded_io::ErrorType for BufferedUartRx {
+    type Error = core::convert::Infallible;
+}
+
+impl embedded_io_async::Write for BufferedUart {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        TX_PIPE[self.idx].write_all(buf).await;
+        critical_section::with(|_| {
+            if !TX_ACTIVE[self.idx].load(core::sync::atomic::Ordering::Relaxed) {
+                TX_ACTIVE[self.idx].store(true, core::sync::atomic::Ordering::Relaxed);
+                self.regs.ier.modify(|v| v | ub::ISR_TXBE);
+                buffered_tx_drain(self.idx, self.regs);
+            }
+        });
+        Ok(buf.len())
+    }
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        BufferedUartTx { regs: self.regs, idx: self.idx }.flush().await;
+        Ok(())
+    }
+}
+
+impl embedded_io_async::Write for BufferedUartTx {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        BufferedUartTx::write(self, buf).await;
+        Ok(buf.len())
+    }
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        BufferedUartTx::flush(self).await;
+        Ok(())
+    }
+}
+
+impl embedded_io_async::Read for BufferedUart {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        RX_PIPE[self.idx].read(buf).await;
+        Ok(1)
+    }
+}
+
+impl embedded_io_async::Read for BufferedUartRx {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        RX_PIPE[self.idx].read(buf).await;
+        Ok(1)
+    }
+}
+
+/// 缓冲模式 IRQ：RX 排空入管道 / TX 排空管道入 TDR / TC 唤醒 flush。
+/// 临界区内调用（kick 与本函数共用一套状态）。
+fn buffered_irq(idx: usize, regs: &'static pac::Uart) {
+    // RX：排空 RDR（读 RDR 清 RC；错误位经 ICR R1W0 清）
+    loop {
+        let isr = regs.isr.read();
+        if isr & ub::ISR_RC != 0 {
+            let b = regs.rdr.read() as u8;
+            let one = [b];
+            if RX_PIPE[idx].try_write(&one).is_err() {
+                {
+                // v6m 无 fetch_add（无 CAS）；本函数全程临界区，load+store 安全
+                let d = RX_DROPPED[idx].load(core::sync::atomic::Ordering::Relaxed);
+                RX_DROPPED[idx].store(d + 1, core::sync::atomic::Ordering::Relaxed);
+            }
+            }
+        } else {
+            if isr & (ub::ISR_ORE | ub::ISR_NE | ub::ISR_PE | ub::ISR_FE) != 0 {
+                regs.icr.write(ub::ICR_CLEAR_RX_ERRORS);
+            }
+            break;
+        }
+    }
+    buffered_tx_drain(idx, regs);
+
+    // TC：发送完成 → 单发屏蔽并唤醒 flush 等待者
+    let ier = regs.ier.read();
+    if ier & ub::ISR_TC != 0 && regs.isr.read() & ub::ISR_TC != 0 {
+        regs.ier.modify(|v| v & !ub::ISR_TC);
+        FLUSH_WAKER[idx].wake();
+    }
+}
+
+/// TX 排空：管道有货且 TXBE 时写 TDR（写前清 TC，防陈旧标志把
+/// flush 提前唤醒——纪律吸收自 cw32-hal2 的 transmit()）。
+fn buffered_tx_drain(idx: usize, regs: &'static pac::Uart) {
+    let mut byte = [0u8; 1];
+    while TX_ACTIVE[idx].load(core::sync::atomic::Ordering::Relaxed)
+        && regs.isr.read() & ub::ISR_TXBE != 0
+        && TX_PIPE[idx].try_read(&mut byte).map(|n| n > 0).unwrap_or(false)
+    {
+        regs.icr.write(ub::ICR_NONE & !ub::ISR_TC); // R1W0：清 TC
+        regs.tdr.write(byte[0] as u32);
+    }
+    if TX_PIPE[idx].is_empty() {
+        // 排空完毕：关 TXBE、清活跃标记（TC 稍后到点唤醒 flush）
+        regs.ier.modify(|v| v & !ub::ISR_TXBE);
+        TX_ACTIVE[idx].store(false, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 // ================= 中断派发 =================
 
-/// 单实例中断处理：唤醒对应方向的等待者，清接收错误。
+/// 单实例中断处理：缓冲模式走管道排空，逐字节模式唤醒等待者。
 fn on_irq(idx: usize, regs: &'static pac::Uart) {
+    if BUFFERED[idx].load(core::sync::atomic::Ordering::Relaxed) {
+        critical_section::with(|_| buffered_irq(idx, regs));
+        return;
+    }
     let isr = regs.isr.read();
     if isr & (ub::ISR_RC | ub::ISR_ORE | ub::ISR_NE | ub::ISR_PE | ub::ISR_FE) != 0 {
         RX_WAKER[idx].wake();

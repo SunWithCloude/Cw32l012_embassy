@@ -245,6 +245,13 @@ impl Input {
         let m = self.pin.mask();
         let bank = self.pin.bank();
         let gpio = self.pin.gpio;
+        // 使能 NVIC 中断线（v0.1 遗漏：向量有了但 ISER 没开）
+        match bank {
+            0 => crate::pac::Interrupt::GpioA.enable(),
+            1 => crate::pac::Interrupt::GpioB.enable(),
+            2 => crate::pac::Interrupt::GpioC.enable(),
+            _ => crate::pac::Interrupt::GpioF.enable(),
+        }
         // 清历史标志、清软件触发位，再挂边沿中断
         critical_section::with(|_| {
             gpio.icr.write(m);

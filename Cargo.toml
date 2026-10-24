@@ -1,6 +1,6 @@
 [package]
 name = "embassy-cw32"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "embassy async HAL for the CW32L012 Cortex-M0+ MCU (Wuhan Xinyuan / CMSemicon)"
@@ -49,4 +49,8 @@ required-features = ["rt"]
 
 [[example]]
 name = "uart_echo_async"
+required-features = ["rt"]
+
+[[example]]
+name = "buffered_echo"
 required-features = ["rt"]

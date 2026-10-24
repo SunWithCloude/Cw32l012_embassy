@@ -191,6 +191,12 @@ impl I2c {
                 | (t.clklo as u32) << ic::MCCR_CLKLO_POS,
         );
         regs.mier.write(0);
+        // 使能 NVIC 中断线（v0.1 遗漏修复）
+        if idx == 0 {
+            crate::pac::Interrupt::I2c1.enable();
+        } else {
+            crate::pac::Interrupt::I2c2.enable();
+        }
         regs.mcr0.write(ic::MCR0_MEN | ic::MCR0_CLKSRC_PCLK);
 
         Self { regs, idx }
