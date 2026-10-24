@@ -61,7 +61,6 @@ compile_error!("cw32l012 与 cw32f030 feature 互斥,一个固件只选一个家
 compile_error!("必须启用一个家族 feature:cw32l012 或 cw32f030");
 
 pub mod gpio;
-#[cfg(feature = "cw32l012")]
 pub mod i2c;
 pub mod interrupt;
 pub mod spi;

@@ -73,3 +73,7 @@ required-features = ["rt", "cw32f030"]
 [[example]]
 name = "spi_loopback_f030"
 required-features = ["rt", "cw32f030"]
+
+[[example]]
+name = "i2c_scan_f030"
+required-features = ["rt", "cw32f030"]

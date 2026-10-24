@@ -51,6 +51,8 @@ pub enum Reg {
     Dir,
     /// 模拟开关
     Analog,
+    /// 开漏输出(F030 经典家族 I2C 必需)
+    OpEndrain,
     /// 下拉
     Pdr,
     /// 上拉
@@ -84,6 +86,7 @@ macro_rules! impl_port {
             match r {
                 Reg::Dir => self.dir.read(),
                 Reg::Analog => self.analog.read(),
+                Reg::OpEndrain => self.opendrain.read(),
                 Reg::Pdr => self.pdr.read(),
                 Reg::Pur => self.pur.read(),
                 Reg::Riseie => self.riseie.read(),
@@ -98,6 +101,7 @@ macro_rules! impl_port {
             match r {
                 Reg::Dir => self.dir.write(v),
                 Reg::Analog => self.analog.write(v),
+                Reg::OpEndrain => self.opendrain.write(v),
                 Reg::Pdr => self.pdr.write(v),
                 Reg::Pur => self.pur.write(v),
                 Reg::Riseie => self.riseie.write(v),
@@ -113,6 +117,7 @@ macro_rules! impl_port {
             match r {
                 Reg::Dir => self.dir.modify(f),
                 Reg::Analog => self.analog.modify(f),
+                Reg::OpEndrain => self.opendrain.modify(f),
                 Reg::Pdr => self.pdr.modify(f),
                 Reg::Pur => self.pur.modify(f),
                 Reg::Riseie => self.riseie.modify(f),
@@ -216,8 +221,13 @@ impl<P: GpioPort> Pin<P> {
     }
 
     /// 引脚位掩码
-    fn mask(&self) -> u32 {
+    pub fn mask(&self) -> u32 {
         1 << self.pin
+    }
+
+    /// 端口访问(供驱动做特征之外的专项配置,如 I2C 开漏)
+    pub fn port(&self) -> &'static P {
+        self.port
     }
 
     /// 设置复用功能（转发给端口实现）
