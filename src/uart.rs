@@ -248,10 +248,11 @@ impl Uart {
         }
         #[cfg(feature = "cw32f030")]
         {
+            // F030 APBEN 无 KEY 保护,用读改写防顶掉其它使能位
             match idx {
-                0 => sysctrl.apben2.write(crate::SYSCTRL_KEY | (1 << 9)),
-                1 => sysctrl.apben1.write(crate::SYSCTRL_KEY | (1 << 7)),
-                _ => sysctrl.apben1.write(crate::SYSCTRL_KEY | (1 << 8)),
+                0 => sysctrl.apben2.modify(|v| v | (1 << 9)),
+                1 => sysctrl.apben1.modify(|v| v | (1 << 7)),
+                _ => sysctrl.apben1.modify(|v| v | (1 << 8)),
             }
         }
 

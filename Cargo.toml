@@ -65,3 +65,7 @@ required-features = ["rt", "cw32l012"]
 [[example]]
 name = "blink_async_f030"
 required-features = ["rt", "cw32f030"]
+
+[[example]]
+name = "uart_echo_f030"
+required-features = ["rt", "cw32f030"]

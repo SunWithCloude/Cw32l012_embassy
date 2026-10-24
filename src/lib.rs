@@ -207,29 +207,41 @@ mod cs_impl_host {
 // 两代的 AHBEN GPIO 位:A/B/C 相同(4/5/6),F 不同(L012=7,F030=9);
 // 且生成版 PAC 无位常量,统一用位掩码写。
 
-/// SYSCTRL 写保护键(两代家族相同)
+/// SYSCTRL 写保护键。⚠ 仅 L012 需要:其 KEY 保护寄存器须高 16 位
+/// 0x5A5A 才生效。**F030 经典家族的 AHBEN/APBEN 无 KEY 保护**(厂商库
+/// `CW_SYSCTRL->APBEN2 |= Periph` 直接写,2026-10-24 上板实测带 KEY 写
+/// 会顶掉使能位),仅 IER/复位类寄存器带 KEY。
+#[cfg(feature = "cw32l012")]
 pub const SYSCTRL_KEY: u32 = 0x5A5A << 16;
 
 /// 打开 GPIOA 端口时钟(AHBEN bit4,两代相同)。
 pub fn sysctrl_enable_gpioa(sysctrl: &'static crate::Sysctrl) {
+    #[cfg(feature = "cw32l012")]
     sysctrl.ahben.write(SYSCTRL_KEY | (1 << 4));
+    #[cfg(feature = "cw32f030")]
+    sysctrl.ahben.modify(|v| v | (1 << 4));
 }
 
 /// 打开 GPIOB 端口时钟(AHBEN bit5,两代相同)。
 pub fn sysctrl_enable_gpiob(sysctrl: &'static crate::Sysctrl) {
+    #[cfg(feature = "cw32l012")]
     sysctrl.ahben.write(SYSCTRL_KEY | (1 << 5));
+    #[cfg(feature = "cw32f030")]
+    sysctrl.ahben.modify(|v| v | (1 << 5));
 }
 
 /// 打开 GPIOC 端口时钟(AHBEN bit6,两代相同)。
 pub fn sysctrl_enable_gpioc(sysctrl: &'static crate::Sysctrl) {
+    #[cfg(feature = "cw32l012")]
     sysctrl.ahben.write(SYSCTRL_KEY | (1 << 6));
+    #[cfg(feature = "cw32f030")]
+    sysctrl.ahben.modify(|v| v | (1 << 6));
 }
 
 /// 打开 GPIOF 端口时钟(L012:AHBEN bit7;F030:bit9)。
 pub fn sysctrl_enable_gpiof(sysctrl: &'static crate::Sysctrl) {
     #[cfg(feature = "cw32l012")]
-    let bit = 7;
+    sysctrl.ahben.write(SYSCTRL_KEY | (1 << 7));
     #[cfg(feature = "cw32f030")]
-    let bit = 9;
-    sysctrl.ahben.write(SYSCTRL_KEY | (1 << bit));
+    sysctrl.ahben.modify(|v| v | (1 << 9));
 }
