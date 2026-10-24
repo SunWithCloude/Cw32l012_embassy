@@ -9,14 +9,14 @@ Semiconductor (CMSemicon), built on
 [cw32l012-pac](https://github.com/SunWithCloude/Cw32l012_pac) — a register layer
 transcribed from the vendor's *CW32L012 User Manual* V1.4.
 
-## What you get (v0.1)
+## What you get (v0.2)
 
 | Module | Contents |
 |--------|----------|
 | `time_driver` | SysTick time driver for the embassy-time-driver 0.2 interface: 1 MHz tick, dynamic one-shot alarm (reprograms `RVR`), **no periodic wakeup while idle** — low-power friendly |
 | `bind_interrupts!` | embassy-style compile-time interrupt binding (binding the wrong IRQ fails to compile) |
 | `gpio` | async `Input` (`wait_for_rising_edge` / `wait_for_falling_edge` / `wait_for_any_edge` / `wait_for_high` / `wait_for_low`) and `Output` (with the `embedded-hal` 1.0 traits) |
-| `uart` | async UART1/2/3 (interrupt-driven, byte-wise; `embedded-io-async` `Read`/`Write`, `split()` into halves) |
+| `uart` | async UART1/2/3: byte-wise `Uart` **plus `BufferedUart`** — background ring-buffered TX/RX (embassy-sync `Pipe`, 64 bytes each way), concurrent multi-task readers/writers, `flush` waits for TC. Design absorbed from cw32-hal2, see `THIRD_PARTY.md` |
 | `i2c` | async I2C1/2 master (`embedded-hal-async::i2c::I2c`, command-FIFO peripheral) |
 | `spi` | async SPI1/2/3 master (`SpiBus`, software chip-select) |
 | `critical-section-impl` | PRIMASK implementation (on by default; one per firmware) |
@@ -119,7 +119,7 @@ reprogram otherwise produces.
 
 ## Roadmap (not yet supported)
 
-- DMA (buffered UART/SPI, ADC, memory-to-memory)
+- DMA-backed transfers (UART/SPI, ADC, memory-to-memory) — the IRQ-buffered UART already landed in v0.2
 - async ADC / DAC / timer PWM / RTC alarm wakeup
 - `Output` settle helpers, GPIO low-power wakeup configuration
 - runtime clock-tree configuration (async RCC API)
@@ -153,6 +153,22 @@ the link will fail.
   async executor, time driver and task wakeup all work end to end.
 - uart_echo_async was flashed and runs (no hardware fault), but the async
   loopback still needs a USB-serial adapter to measure.
+- **buffered_echo verified on board (2026-10-24)**: the heartbeat LED proves
+  the executor with two concurrent tasks (echo task parked on a pipe read);
+  `ISER bit27 = 1` proves the v0.2 NVIC-enable fix; injecting a UART1 pend
+  through `ISPR` via the debug probe clears `ICPR` with no lockup, exercising
+  the full vector → `bind_interrupts!` → `buffered_irq` → critical-section
+  path on hardware. Actual buffered data flow still needs a serial adapter.
+
+## Related work
+
+[fan2nd/cw32-hal2](https://github.com/fan2nd/cw32-hal2) (October 2026, earlier
+than this crate) takes a whole-family approach: chiptool/metapac architecture
+covering many CW32F/L/A parts, broad driver surface (UART DMA/LIN, SPI PIO,
+deep timer coverage), GTIM hardware-compare time driver. This crate instead
+goes deep on the L012 only, with a zero-dependency PAC, register data checked
+line-by-line against UM V1.4, and on-hardware verification. See
+`THIRD_PARTY.md` for what was absorbed from it and under which license.
 
 ## License
 

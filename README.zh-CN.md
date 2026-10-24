@@ -9,14 +9,14 @@
 基于 [cw32l012-pac](https://github.com/SunWithCloude/Cw32l012_pac)（寄存器数据转录自
 《CW32L012 用户手册》V1.4，与 cw32l012-hal 同源）。
 
-## 提供内容（v0.1）
+## 提供内容（v0.2）
 
 | 模块 | 内容 |
 |------|------|
 | `time_driver` | SysTick 时间驱动（embassy-time-driver 0.2 接口）。1MHz tick、动态单次闹钟（`RVR` 重编程），**空闲时无周期性唤醒**，低功耗友好 |
 | `bind_interrupts!` | embassy 风格编译期中断绑定（绑错中断直接编译失败） |
 | `gpio` | 异步 `Input`（`wait_for_rising_edge` / `wait_for_falling_edge` / `wait_for_any_edge` / `wait_for_high` / `wait_for_low`）+ `Output`（含 `embedded-hal` 1.0 trait） |
-| `uart` | 异步 UART1/2/3（中断驱动逐字节，`embedded-io-async` 的 `Read`/`Write`，可 `split()` 收发半部） |
+| `uart` | 异步 UART1/2/3：逐字节 `Uart` + **`BufferedUart`**（后台环形缓冲收发，embassy-sync `Pipe`，收/发各 64 字节，多任务并发读写，`flush` 等 TC；设计吸收自 cw32-hal2，见 `THIRD_PARTY.md`） |
 | `i2c` | 异步 I2C1/2 主机（`embedded-hal-async::i2c::I2c`，命令 FIFO 式外设） |
 | `spi` | 异步 SPI1/2/3 主机（`SpiBus`，软件 CS） |
 | `critical-section-impl` | PRIMASK 实现（默认开启；全固件唯一） |
@@ -113,7 +113,7 @@ embassy-time 语义安全）。`now()` 带单调钳制（`LAST_NOW`），消除�
 
 ## 尚未支持（路线图）
 
-- DMA（UART/SPI 缓冲收发、ADC、memory-to-memory）
+- DMA 搬运（UART/SPI、ADC、memory-to-memory）——基于中断的缓冲 UART 已在 v0.2 落地
 - 异步 ADC / DAC / 定时器 PWM / RTC 闹钟唤醒
 - `Output` 的 `wait_for_settle` 类高级 API、GPIO 低功耗唤醒配置
 - 时钟树运行时配置（RCC async API）
@@ -145,7 +145,21 @@ embassy-time 语义安全）。`now()` 带单调钳制（`LAST_NOW`），消除�
   systicks（500ms @ 4MHz HCLK）——异步执行器、时间驱动、任务唤醒
   全链路工作正常。期间发现并修复了 set_alarm 基数回退错误（见上）；
 - uart_echo_async 已烧录验证运行（无硬件故障），但异步串口数据回环
-  待接 USB 串口适配器后实测。
+  待接 USB 串口适配器后实测；
+- **buffered_echo 已于 2026-10-24 上板验证**：心跳 LED 证明执行器 +
+  双任务并发（echo 任务停驻管道读）；`ISER bit27=1` 证明 v0.2 的
+  NVIC 使能修复生效；经调试口向 `ISPR` 注入 UART1 挂起后 `ICPR`
+  自动清零、心跳不停——向量 → `bind_interrupts!` → `buffered_irq` →
+  临界区 的完整中断管线实机跑通。缓冲数据的实际收发仍需串口适配器。
+
+## 相关工作
+
+[fan2nd/cw32-hal2](https://github.com/fan2nd/cw32-hal2)（2026-10，早于本
+crate 出现）走全家桶路线：chiptool/metapac 架构覆盖 CW32F/L/A 多家族，
+驱动面广（UART DMA/LIN、SPI PIO、深度定时器），时间驱动用 GTIM 硬件
+比较。本 crate 定位不同：单芯片（L012）深挖、零依赖 PAC、寄存器数据
+对 UM V1.4 逐项核对 + 实板验证。吸收了哪些内容、依据什么许可，见
+`THIRD_PARTY.md`。
 
 ## 许可
 
