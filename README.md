@@ -4,7 +4,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-An embassy async HAL for the **CW32L012** (ARM Cortex-M0+) from Wuhan Xinyuan
+Multi-family embassy async HAL for Wuhan Xinyuan (CMSemicon) **CW32** Cortex-M0+ MCUs — **CW32L012** (default) and **CW32F030/A030** (feature `cw32f030`);
 Semiconductor (CMSemicon), built on
 [cw32l012-pac](https://github.com/SunWithCloude/Cw32l012_pac) — a register layer
 transcribed from the vendor's *CW32L012 User Manual* V1.4.
@@ -17,6 +17,7 @@ transcribed from the vendor's *CW32L012 User Manual* V1.4.
 | `bind_interrupts!` | embassy-style compile-time interrupt binding (binding the wrong IRQ fails to compile) |
 | `gpio` | async `Input` (`wait_for_rising_edge` / `wait_for_falling_edge` / `wait_for_any_edge` / `wait_for_high` / `wait_for_low`) and `Output` (with the `embedded-hal` 1.0 traits) |
 | `uart` | async UART1/2/3: byte-wise `Uart` **plus `BufferedUart`** — background ring-buffered TX/RX (embassy-sync `Pipe`, 64 bytes each way), concurrent multi-task readers/writers, `flush` waits for TC. Design absorbed from cw32-hal2, see `THIRD_PARTY.md` |
+| `spi` | (since v0.3) also compiles for the classic F030 generation: family bit-constant surface (BR width/EN position/gates differ), ICR is R1W0 on both |
 | `i2c` | async I2C1/2 master (`embedded-hal-async::i2c::I2c`, command-FIFO peripheral) |
 | `spi` | async SPI1/2/3 master (`SpiBus`, software chip-select) |
 | `critical-section-impl` | PRIMASK implementation (on by default; one per firmware) |
@@ -159,6 +160,18 @@ the link will fail.
   through `ISPR` via the debug probe clears `ICPR` with no lockup, exercising
   the full vector → `bind_interrupts!` → `buffered_irq` → critical-section
   path on hardware. Actual buffered data flow still needs a serial adapter.
+
+## F030 family notes (v0.3)
+
+- `--no-default-features --features "rt,cw32f030,critical-section-impl"` builds
+  for CW32F030/A030 against the generated `cw32f030-pac` (cw32-pac-gen).
+- Reset clock is **8 MHz** (HSI 48M/6) — `Config::default()` handles it.
+- The SYSCTRL AHBEN/APBEN registers have **no key protection** on this
+  generation (unlike L012's 0x5A5A-gated writes); gates use read-modify-write.
+- Verified on an LCKFB CW32F030C8T7: blink_async_f030 (500 ms heartbeat),
+  UART1 init chain (PA08/PA09 AF2, BRRI=4 @115200), SPI1 (CR1=0x1E7C,
+  AFRL=0x55500000). i2c remains L012-only (the classic I2C is a different
+  peripheral; roadmap).
 
 ## Related work
 
