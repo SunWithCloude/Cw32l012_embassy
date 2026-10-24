@@ -64,7 +64,6 @@ pub mod gpio;
 #[cfg(feature = "cw32l012")]
 pub mod i2c;
 pub mod interrupt;
-#[cfg(feature = "cw32l012")]
 pub mod spi;
 pub mod time_driver;
 pub mod uart;
@@ -93,12 +92,20 @@ pub type Gpio = pac::Gpio;
 pub type Sysctrl = pac::Sysctrl;
 #[cfg(feature = "cw32l012")]
 pub type Uart = pac::Uart;
+#[cfg(feature = "cw32l012")]
+pub type Spi = pac::Spi;
+#[cfg(feature = "cw32l012")]
+pub type I2c = pac::I2c;
 #[cfg(feature = "cw32f030")]
 pub type Gpio = pac::GPIO;
 #[cfg(feature = "cw32f030")]
 pub type Sysctrl = pac::SYSCTRL;
 #[cfg(feature = "cw32f030")]
 pub type Uart = pac::UART;
+#[cfg(feature = "cw32f030")]
+pub type Spi = pac::SPI;
+#[cfg(feature = "cw32f030")]
+pub type I2c = pac::I2C;
 
 use core::sync::atomic::{AtomicU32, Ordering};
 

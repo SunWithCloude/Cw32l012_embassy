@@ -3,7 +3,9 @@
 //! 片选由用户 GPIO 管理（软件 CS）：传输前拉低、`flush` 后拉高。
 //! 时序默认 Mode 0、MSB first、8-bit。
 //!
-//! 引脚（AF3，UM 表 9-2 摘要）：SPI1 = PA05(SCK)/PA06(MISO)/PA07(MOSI)。
+//! 家族差异见 [`SpiFamily`]（L012:BR 7 位@CR1[24]、EN@CR2[0]、
+//! SYSCTRL 带 KEY;F030 经典:BR 3 位@CR1[3..5]、EN@CR1[6]、无 KEY、
+//! ICR 同为 R1W0——厂商库 `SPIx->ICR &= ~flag` 实锤）。
 
 use core::future::poll_fn;
 use core::task::Poll;
@@ -12,7 +14,86 @@ use embassy_sync::waitqueue::AtomicWaker;
 
 use crate::gpio::{GpioPort, Pin};
 use crate::interrupt::{Binding, IrqHandler, interrupt};
-use crate::pac::{self, spi as sb};
+use crate::pac;
+
+// ================= 家族位常量面 =================
+
+/// 共用 ISR/IER 位（两代相同：TXE=0、RXNE=1、BUSY=8）
+mod common {
+    /// 发送缓冲空
+    pub const ISR_TXE: u32 = 1 << 0;
+    /// 接收缓冲非空
+    pub const ISR_RXNE: u32 = 1 << 1;
+    /// 总线忙
+    pub const ISR_BUSY: u32 = 1 << 8;
+}
+
+#[cfg(feature = "cw32l012")]
+mod fam {
+    pub use crate::pac::spi as sb;
+    /// SYSCTRL KEY 仅 L012
+    pub const KEY: u32 = crate::SYSCTRL_KEY;
+    /// 门控:全在 APBEN1(SPI1=2/SPI2=13/SPI3=14)
+    pub fn gate(sysctrl: &crate::Sysctrl, idx: usize) {
+        let g = match idx {
+            0 => crate::pac::sysctrl::APBEN1_SPI1,
+            1 => crate::pac::sysctrl::APBEN1_SPI2,
+            _ => crate::pac::sysctrl::APBEN1_SPI3,
+        };
+        sysctrl.apben1.write(KEY | g);
+    }
+    /// EN 在 CR2[0];CR1 可写前提是 CR2.EN=0
+    pub const CR2_EN: u32 = sb::CR2_EN;
+    /// BR 位域:7 位,在 CR1[24..31]
+    pub const BR_POS: u32 = sb::CR1_BR_POS;
+    pub const BR_MASK: u32 = sb::CR1_BR_MASK; // 0x7F
+    /// CR1 组合位
+    pub const CR1_MSTR: u32 = sb::CR1_MSTR;
+    pub const CR1_SSM: u32 = sb::CR1_SSM;
+    pub const CR1_CPOL: u32 = sb::CR1_CPOL;
+    pub const CR1_CPHA: u32 = sb::CR1_CPHA;
+    pub const CR1_LSBF: u32 = sb::CR1_LSBF;
+    /// 使能序列
+    pub fn enable(regs: &crate::Spi, cr1: u32) {
+        regs.cr2.write(0); // EN=0 时才能写 CR1
+        regs.cr1.write(cr1);
+        regs.ssi.write(1); // 内部 CS 拉高
+        regs.icr.write(0); // R1W0:写 0 清全部标志
+        regs.cr2.write(CR2_EN);
+    }
+}
+
+#[cfg(feature = "cw32f030")]
+mod fam {
+    /// F030 SYSCTRL 的 AHBEN/APBEN 无 KEY 保护(厂商库 |= 直写)
+    /// 门控:SPI1=APBEN2.8、SPI2=APBEN1.6
+    pub fn gate(sysctrl: &crate::Sysctrl, idx: usize) {
+        match idx {
+            0 => sysctrl.apben2.modify(|v| v | (1 << 8)),
+            1 => sysctrl.apben1.modify(|v| v | (1 << 6)),
+            _ => unreachable!("F030 无 SPI3"),
+        }
+    }
+    /// BR 位域:3 位,在 CR1[3..5]
+    pub const BR_POS: u32 = 3;
+    pub const BR_MASK: u32 = 0x7 << BR_POS;
+    /// CR1 组合位(F030 头 SPIx_CR1_*)
+    pub const CR1_MSTR: u32 = 1 << 2;
+    pub const CR1_SSM: u32 = 1 << 9;
+    pub const CR1_CPOL: u32 = 1 << 1;
+    pub const CR1_CPHA: u32 = 1 << 0;
+    pub const CR1_LSBF: u32 = 1 << 7;
+    pub const CR1_EN: u32 = 1 << 6;
+    /// 使能序列:CR1 一把写(EN 在 CR1 里,无 CR2.EN 前置约束)
+    pub fn enable(regs: &crate::Spi, cr1: u32) {
+        regs.icr.modify(|v| v); // R1W0:保持值写入即可清历史标志(全 1 无动作位)
+        regs.cr1.write(cr1 | CR1_EN);
+        regs.ssi.write(1);
+    }
+}
+
+use common::*;
+use fam as f;
 
 /// SPI 配置
 #[derive(Debug, Clone, Copy)]
@@ -49,10 +130,11 @@ impl Default for Config {
 }
 
 /// 实例索引（0/1/2 = SPI1/2/3）
-fn instance_of(regs: &'static pac::Spi) -> usize {
+fn instance_of(regs: &'static crate::Spi) -> usize {
     match regs as *const _ as usize {
         pac::SPI1_BASE => 0,
         pac::SPI2_BASE => 1,
+        #[cfg(feature = "cw32l012")]
         pac::SPI3_BASE => 2,
         _ => unreachable!("非 SPI 寄存器块"),
     }
@@ -62,14 +144,15 @@ static WAKER: [AtomicWaker; 3] = [const { AtomicWaker::new() }; 3];
 
 /// 异步 SPI 主机
 pub struct Spi {
-    regs: &'static pac::Spi,
+    regs: &'static crate::Spi,
     idx: usize,
 }
 
 impl Spi {
     /// 初始化 SPI 主机（全双工、软件 CS）并配置引脚复用。
+    #[cfg(feature = "cw32l012")]
     pub fn new(
-        regs: &'static pac::Spi,
+        regs: &'static crate::Spi,
         sck: Pin<impl GpioPort>,
         mosi: Pin<impl GpioPort>,
         miso: Pin<impl GpioPort>,
@@ -80,9 +163,22 @@ impl Spi {
         Self::new_inner(regs, sck, mosi, miso, af, config)
     }
 
+    #[cfg(feature = "cw32f030")]
+    pub fn new(
+        regs: &'static crate::Spi,
+        sck: Pin<impl GpioPort>,
+        mosi: Pin<impl GpioPort>,
+        miso: Pin<impl GpioPort>,
+        af: u8,
+        _irqs: impl Binding<interrupt::SPI1> + Binding<interrupt::SPI2>,
+        config: Config,
+    ) -> Self {
+        Self::new_inner(regs, sck, mosi, miso, af, config)
+    }
+
     /// 初始化 SPI1（IRQ 绑定收窄到 SPI1）。
     pub fn new_spi1(
-        regs: &'static pac::Spi,
+        regs: &'static crate::Spi,
         sck: Pin<impl GpioPort>,
         mosi: Pin<impl GpioPort>,
         miso: Pin<impl GpioPort>,
@@ -94,8 +190,9 @@ impl Spi {
     }
 
     /// 初始化 SPI2（IRQ 绑定收窄到 SPI23）。
+    #[cfg(feature = "cw32l012")]
     pub fn new_spi2(
-        regs: &'static pac::Spi,
+        regs: &'static crate::Spi,
         sck: Pin<impl GpioPort>,
         mosi: Pin<impl GpioPort>,
         miso: Pin<impl GpioPort>,
@@ -106,9 +203,24 @@ impl Spi {
         Self::new_inner(regs, sck, mosi, miso, af, config)
     }
 
-    /// 初始化 SPI3（IRQ 绑定收窄到 SPI23）。
+    /// 初始化 SPI2(F030,独立向量)。
+    #[cfg(feature = "cw32f030")]
+    pub fn new_spi2(
+        regs: &'static crate::Spi,
+        sck: Pin<impl GpioPort>,
+        mosi: Pin<impl GpioPort>,
+        miso: Pin<impl GpioPort>,
+        af: u8,
+        _irqs: impl Binding<interrupt::SPI2>,
+        config: Config,
+    ) -> Self {
+        Self::new_inner(regs, sck, mosi, miso, af, config)
+    }
+
+    /// 初始化 SPI3（IRQ 绑定收窄到 SPI23;仅 L012）。
+    #[cfg(feature = "cw32l012")]
     pub fn new_spi3(
-        regs: &'static pac::Spi,
+        regs: &'static crate::Spi,
         sck: Pin<impl GpioPort>,
         mosi: Pin<impl GpioPort>,
         miso: Pin<impl GpioPort>,
@@ -120,7 +232,7 @@ impl Spi {
     }
 
     fn new_inner(
-        regs: &'static pac::Spi,
+        regs: &'static crate::Spi,
         sck: Pin<impl GpioPort>,
         mosi: Pin<impl GpioPort>,
         miso: Pin<impl GpioPort>,
@@ -128,42 +240,36 @@ impl Spi {
         config: Config,
     ) -> Self {
         let idx = instance_of(regs);
-        let sysctrl = unsafe { &*(pac::SYSCTRL_BASE as *const pac::Sysctrl) };
-        let gate = match idx {
-            0 => pac::sysctrl::APBEN1_SPI1,
-            1 => pac::sysctrl::APBEN1_SPI2,
-            _ => pac::sysctrl::APBEN1_SPI3,
-        };
-        sysctrl.apben1.write(pac::sysctrl::KEY | gate);
+        let sysctrl = unsafe { &*(pac::SYSCTRL_BASE as *const crate::Sysctrl) };
+        f::gate(sysctrl, idx);
 
         sck.set_af(af);
         mosi.set_af(af);
         miso.set_af(af);
 
         let pclk = crate::PCLK_HZ.load(core::sync::atomic::Ordering::Relaxed);
-        // 波特率 = PCLK / (BR + 1)，取不超过目标的 最大分频满足者
+        // 波特率 = PCLK / (BR + 1)
         let div = pclk.div_ceil(config.frequency).max(1);
-        let br = (div - 1).min(0x7F);
+        let br = (div - 1).min(f::BR_MASK >> f::BR_POS);
 
         let (cpol, cpha) = match config.mode {
             Mode::Mode0 => (0, 0),
-            Mode::Mode1 => (0, sb::CR1_CPHA),
-            Mode::Mode2 => (sb::CR1_CPOL, 0),
-            Mode::Mode3 => (sb::CR1_CPOL, sb::CR1_CPHA),
+            Mode::Mode1 => (0, f::CR1_CPHA),
+            Mode::Mode2 => (f::CR1_CPOL, 0),
+            Mode::Mode3 => (f::CR1_CPOL, f::CR1_CPHA),
         };
-        let lsbf = if config.msb_first { 0 } else { sb::CR1_LSBF };
+        let lsbf = if config.msb_first { 0 } else { f::CR1_LSBF };
 
-        // 使能 NVIC 中断线（v0.1 遗漏修复）
+        // 使能 NVIC 中断线(typelevel 号两代同位)
         match idx {
-            0 => crate::pac::Interrupt::Spi1.enable(),
-            _ => crate::pac::Interrupt::Spi23.enable(),
+            0 => crate::interrupt::nvic_enable::<interrupt::SPI1>(),
+            #[cfg(feature = "cw32l012")]
+            _ => crate::interrupt::nvic_enable::<interrupt::SPI23>(),
+            #[cfg(feature = "cw32f030")]
+            _ => crate::interrupt::nvic_enable::<interrupt::SPI2>(),
         }
-        regs.cr2.write(0); // EN=0 时才能写 CR1
-        regs.cr1
-            .write((br << sb::CR1_BR_POS) | sb::CR1_MSTR | sb::CR1_SSM | cpol | cpha | lsbf);
-        regs.ssi.write(1); // 内部 CS 拉高（未选中）
-        regs.icr.write(0); // R1W0：写 0 清全部标志
-        regs.cr2.write(sb::CR2_EN);
+        let cr1 = (br << f::BR_POS) | f::CR1_MSTR | f::CR1_SSM | cpol | cpha | lsbf;
+        f::enable(regs, cr1);
 
         Self { regs, idx }
     }
@@ -172,10 +278,10 @@ impl Spi {
     async fn wait_txe(&mut self) {
         poll_fn(|cx| {
             WAKER[self.idx].register(cx.waker());
-            if self.regs.isr.read() & sb::ISR_TXE != 0 {
+            if self.regs.isr.read() & ISR_TXE != 0 {
                 Poll::Ready(())
             } else {
-                self.regs.ier.modify(|v| v | sb::ISR_TXE);
+                self.regs.ier.modify(|v| v | ISR_TXE);
                 Poll::Pending
             }
         })
@@ -186,10 +292,10 @@ impl Spi {
     async fn wait_rxne(&mut self) {
         poll_fn(|cx| {
             WAKER[self.idx].register(cx.waker());
-            if self.regs.isr.read() & sb::ISR_RXNE != 0 {
+            if self.regs.isr.read() & ISR_RXNE != 0 {
                 Poll::Ready(())
             } else {
-                self.regs.ier.modify(|v| v | sb::ISR_RXNE);
+                self.regs.ier.modify(|v| v | ISR_RXNE);
                 Poll::Pending
             }
         })
@@ -200,11 +306,11 @@ impl Spi {
     async fn wait_idle(&mut self) {
         poll_fn(|cx| {
             WAKER[self.idx].register(cx.waker());
-            if self.regs.isr.read() & sb::ISR_BUSY == 0 {
+            if self.regs.isr.read() & ISR_BUSY == 0 {
                 Poll::Ready(())
             } else {
                 // BUSY 无中断源：挂 RXNE（每字节产生）作为唤醒代理
-                self.regs.ier.modify(|v| v | sb::ISR_RXNE);
+                self.regs.ier.modify(|v| v | ISR_RXNE);
                 Poll::Pending
             }
         })
@@ -266,15 +372,15 @@ impl embedded_hal_async::spi::SpiBus for Spi {
 // ================= 中断派发 =================
 
 /// 单实例中断处理：唤醒等待者并压掉无等待源的中断使能。
-fn on_irq(idx: usize, regs: &'static pac::Spi) {
+fn on_irq(idx: usize, regs: &'static crate::Spi) {
     let isr = regs.isr.read();
-    if isr & (sb::ISR_TXE | sb::ISR_RXNE) != 0 {
+    if isr & (ISR_TXE | ISR_RXNE) != 0 {
         WAKER[idx].wake();
-        if isr & sb::ISR_TXE != 0 {
-            regs.ier.modify(|v| v & !sb::ISR_TXE);
+        if isr & ISR_TXE != 0 {
+            regs.ier.modify(|v| v & !ISR_TXE);
         }
-        if isr & sb::ISR_RXNE != 0 {
-            regs.ier.modify(|v| v & !sb::ISR_RXNE);
+        if isr & ISR_RXNE != 0 {
+            regs.ier.modify(|v| v & !ISR_RXNE);
         }
     }
 }
@@ -283,24 +389,38 @@ fn on_irq(idx: usize, regs: &'static pac::Spi) {
 pub struct Spi1Irq;
 impl IrqHandler<interrupt::SPI1> for Spi1Irq {
     fn call() {
-        on_irq(0, unsafe { &*(pac::SPI1_BASE as *const pac::Spi) });
+        on_irq(0, unsafe { &*(pac::SPI1_BASE as *const crate::Spi) });
     }
 }
 
-/// SPI2 中断标记（IRQ26，与 SPI3 共享向量）
+#[cfg(feature = "cw32l012")]
+/// SPI2 中断标记（IRQ26，与 SPI3 共享向量；L012）
 pub struct Spi2Irq;
+#[cfg(feature = "cw32l012")]
 impl IrqHandler<interrupt::SPI23> for Spi2Irq {
     fn call() {
-        on_irq(1, unsafe { &*(pac::SPI2_BASE as *const pac::Spi) });
-        on_irq(2, unsafe { &*(pac::SPI3_BASE as *const pac::Spi) });
+        on_irq(1, unsafe { &*(pac::SPI2_BASE as *const crate::Spi) });
+        on_irq(2, unsafe { &*(pac::SPI3_BASE as *const crate::Spi) });
     }
 }
 
-/// SPI3 中断标记（IRQ26，与 SPI2 共享向量）
+#[cfg(feature = "cw32l012")]
+/// SPI3 中断标记（IRQ26，与 SPI2 共享向量；L012）
 pub struct Spi3Irq;
+#[cfg(feature = "cw32l012")]
 impl IrqHandler<interrupt::SPI23> for Spi3Irq {
     fn call() {
-        on_irq(1, unsafe { &*(pac::SPI2_BASE as *const pac::Spi) });
-        on_irq(2, unsafe { &*(pac::SPI3_BASE as *const pac::Spi) });
+        on_irq(1, unsafe { &*(pac::SPI2_BASE as *const crate::Spi) });
+        on_irq(2, unsafe { &*(pac::SPI3_BASE as *const crate::Spi) });
+    }
+}
+
+/// SPI2 中断标记（IRQ26;F030 仅 SPI1/SPI2）
+#[cfg(feature = "cw32f030")]
+pub struct Spi2Irq;
+#[cfg(feature = "cw32f030")]
+impl IrqHandler<interrupt::SPI2> for Spi2Irq {
+    fn call() {
+        on_irq(1, unsafe { &*(pac::SPI2_BASE as *const crate::Spi) });
     }
 }

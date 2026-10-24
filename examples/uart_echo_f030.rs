@@ -14,9 +14,9 @@ use embassy_executor::main;
 use embassy_time::Timer;
 
 use embassy_cw32::{
+    Config, Peripherals,
     gpio::{Level, Output, Pin},
     uart::{self, Uart},
-    Config, Peripherals,
 };
 
 embassy_cw32::bind_interrupts!(struct Irqs {
