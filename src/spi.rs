@@ -10,7 +10,7 @@ use core::task::Poll;
 
 use embassy_sync::waitqueue::AtomicWaker;
 
-use crate::gpio::Pin;
+use crate::gpio::{GpioPort, Pin};
 use crate::interrupt::{Binding, IrqHandler, interrupt};
 use crate::pac::{self, spi as sb};
 
@@ -70,9 +70,9 @@ impl Spi {
     /// 初始化 SPI 主机（全双工、软件 CS）并配置引脚复用。
     pub fn new(
         regs: &'static pac::Spi,
-        sck: Pin,
-        mosi: Pin,
-        miso: Pin,
+        sck: Pin<impl GpioPort>,
+        mosi: Pin<impl GpioPort>,
+        miso: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::SPI1> + Binding<interrupt::SPI23>,
         config: Config,
@@ -83,9 +83,9 @@ impl Spi {
     /// 初始化 SPI1（IRQ 绑定收窄到 SPI1）。
     pub fn new_spi1(
         regs: &'static pac::Spi,
-        sck: Pin,
-        mosi: Pin,
-        miso: Pin,
+        sck: Pin<impl GpioPort>,
+        mosi: Pin<impl GpioPort>,
+        miso: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::SPI1>,
         config: Config,
@@ -96,9 +96,9 @@ impl Spi {
     /// 初始化 SPI2（IRQ 绑定收窄到 SPI23）。
     pub fn new_spi2(
         regs: &'static pac::Spi,
-        sck: Pin,
-        mosi: Pin,
-        miso: Pin,
+        sck: Pin<impl GpioPort>,
+        mosi: Pin<impl GpioPort>,
+        miso: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::SPI23>,
         config: Config,
@@ -109,9 +109,9 @@ impl Spi {
     /// 初始化 SPI3（IRQ 绑定收窄到 SPI23）。
     pub fn new_spi3(
         regs: &'static pac::Spi,
-        sck: Pin,
-        mosi: Pin,
-        miso: Pin,
+        sck: Pin<impl GpioPort>,
+        mosi: Pin<impl GpioPort>,
+        miso: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::SPI23>,
         config: Config,
@@ -121,9 +121,9 @@ impl Spi {
 
     fn new_inner(
         regs: &'static pac::Spi,
-        sck: Pin,
-        mosi: Pin,
-        miso: Pin,
+        sck: Pin<impl GpioPort>,
+        mosi: Pin<impl GpioPort>,
+        miso: Pin<impl GpioPort>,
         af: u8,
         config: Config,
     ) -> Self {

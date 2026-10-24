@@ -1,11 +1,11 @@
 [package]
 name = "embassy-cw32"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
-description = "embassy async HAL for the CW32L012 Cortex-M0+ MCU (Wuhan Xinyuan / CMSemicon)"
+description = "embassy async HAL for CW32 Cortex-M0+ MCUs (Wuhan Xinyuan / CMSemicon): CW32L012 and CW32F030/A030"
 categories = ["embedded", "hardware-support", "no-std", "async"]
-keywords = ["cw32", "cw32l012", "embassy", "async", "embedded"]
+keywords = ["cw32", "cw32l012", "cw32f030", "embassy", "async"]
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/SunWithCloude/Cw32l012_embassy"
@@ -13,9 +13,12 @@ repository = "https://github.com/SunWithCloude/Cw32l012_embassy"
 [package.metadata.docs.rs]
 default-target = "thumbv6m-none-eabi"
 targets = ["thumbv6m-none-eabi"]
+features = ["cw32l012"]
 
 [dependencies]
-cw32l012-pac = { path = "../cw32l012-pac", version = "0.2", default-features = false }
+# 家族 PAC(二选一,由 feature 决定):L012 用手写核对版,F030 用生成版
+cw32l012-pac = { path = "../cw32l012-pac", version = "0.2", default-features = false, optional = true }
+cw32f030-pac = { path = "../cw32-pac-gen/out/cw32f030-pac", optional = true }
 critical-section = { version = "1.2", features = ["restore-state-u8"] }
 embassy-sync = "0.8"
 embassy-time = "0.5"
@@ -29,13 +32,17 @@ embedded-hal-async = "1"
 embedded-io-async = "0.7"
 
 [features]
-default = ["critical-section-impl"]
+default = ["critical-section-impl", "cw32l012"]
 # PRIMASK 关中断实现 critical-section（单核 M0+）。
 # 一个固件只能有一个实现：不要与 cw32l012-hal 的 critical-section-impl
 # 或 cortex-m 的实现同时启用（链接冲突）。
 critical-section-impl = []
-# 透传 PAC 的 rt feature（cortex-m-rt 向量表），示例与正式固件都需要。
-rt = ["cw32l012-pac/rt"]
+# 家族选择(互斥):cw32l012 = L010/L011/L012 代外设;cw32f030 = 经典代
+# (CW32F030/CW32A030 寄存器兼容)
+cw32l012 = ["dep:cw32l012-pac"]
+cw32f030 = ["dep:cw32f030-pac"]
+# 透传所选家族 PAC 的 rt feature(cortex-m-rt 向量表)
+rt = ["cw32l012-pac?/rt", "cw32f030-pac?/rt"]
 
 # 示例依赖仅对 ARM 裸机目标启用（宿主机 cargo test 不拉取，
 # 否则 cortex-m 平台代码在 x86 上编译失败）
@@ -45,12 +52,16 @@ cortex-m-rt = { version = "0.7", features = ["device"] }
 
 [[example]]
 name = "blink_async"
-required-features = ["rt"]
+required-features = ["rt", "cw32l012"]
 
 [[example]]
 name = "uart_echo_async"
-required-features = ["rt"]
+required-features = ["rt", "cw32l012"]
 
 [[example]]
 name = "buffered_echo"
-required-features = ["rt"]
+required-features = ["rt", "cw32l012"]
+
+[[example]]
+name = "blink_async_f030"
+required-features = ["rt", "cw32f030"]

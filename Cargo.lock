@@ -111,6 +111,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
+name = "cw32f030-pac"
+version = "0.1.0"
+dependencies = [
+ "cortex-m-rt",
+]
+
+[[package]]
 name = "cw32l012-pac"
 version = "0.2.1"
 dependencies = [
@@ -163,10 +170,11 @@ dependencies = [
 
 [[package]]
 name = "embassy-cw32"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cortex-m-rt",
  "critical-section",
+ "cw32f030-pac",
  "cw32l012-pac",
  "embassy-executor",
  "embassy-futures",

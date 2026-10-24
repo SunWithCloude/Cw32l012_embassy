@@ -16,7 +16,7 @@
 //! ```
 
 /// typelevel 中断类型（转发 PAC）
-pub use cw32l012_pac::interrupt;
+pub use crate::pac::interrupt;
 
 /// "某结构体持有中断 INT 的绑定" 标记。
 ///
@@ -27,6 +27,12 @@ pub use cw32l012_pac::interrupt;
 /// 实现者必须保证对应中断确实经 `bind_interrupts!` 绑定到了处理该
 /// 外设的驱动（宏生成即满足）。
 pub unsafe trait Binding<INT: interrupt::Interrupt> {}
+
+/// 直接经 typelevel 中断号使能 NVIC 线(ISER 写 1 置位)。
+/// 两套 PAC 的枚举变体命名不同,但 typelevel 标记同名同号——驱动统一走这里。
+pub(crate) fn nvic_enable<I: interrupt::Interrupt>() {
+    unsafe { core::ptr::write_volatile(0xE000_E100 as *mut u32, 1 << I::NUMBER) }
+}
 
 /// 中断处理入口契约：驱动的 per-IRQ 标记类型实现它。
 ///

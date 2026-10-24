@@ -13,9 +13,9 @@ use embassy_executor::{main, task};
 use embassy_time::Timer;
 
 use embassy_cw32::{
+    Config, Peripherals,
     gpio::{Level, Output, Pin},
     uart::{self, BufferedUart},
-    Config, Peripherals,
 };
 
 embassy_cw32::bind_interrupts!(struct Irqs {
@@ -23,7 +23,10 @@ embassy_cw32::bind_interrupts!(struct Irqs {
 });
 
 #[task]
-async fn echo(mut rx: embassy_cw32::uart::BufferedUartRx, mut tx: embassy_cw32::uart::BufferedUartTx) {
+async fn echo(
+    mut rx: embassy_cw32::uart::BufferedUartRx,
+    mut tx: embassy_cw32::uart::BufferedUartTx,
+) {
     let mut buf = [0u8; 32];
     loop {
         let n = rx.read(&mut buf).await;

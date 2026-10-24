@@ -1,8 +1,11 @@
 //! GPIO：异步 `Input`（等边沿 / 等电平）与 `Output`。
 //!
-//! CW32L012 每个端口共享一个中断（IRQ5..8 对应 A/B/C/F），上升沿 /
-//! 下降沿使能按位独立（`RISEIE` / `FALLIE`），标志在 `ISR`，写 `ICR`
-//! 清除。等待期间注册 per-pin waker，端口中断里按位唤醒。
+//! 引脚类型 `Pin<P>` 泛型于端口（[`GpioPort`] 特征）：L012 单一 `Gpio`
+//! 端口；F030 经典家族的 GPIOA/B、GPIOC、GPIOF 寄存器集各不相同
+//! （GPIOC 无 AFRL、GPIOF 无 AFRH），特征按各自实际字段实现。
+//!
+//! CW32 每端口共享一个中断，等待期间注册 per-pin waker，端口中断里
+//! 按位唤醒（软件触发位图防丢唤醒）。
 //!
 //! ```ignore
 //! embassy_cw32::bind_interrupts!(struct Irqs { GPIOA => embassy_cw32::gpio::GpioAIrq; });
@@ -19,17 +22,197 @@ use embassy_sync::waitqueue::AtomicWaker;
 use crate::interrupt::{IrqHandler, interrupt};
 use crate::pac;
 
-/// 引脚（运行时绑定端口与编号）
-pub struct Pin {
-    gpio: &'static pac::Gpio,
+// ================= 端口特征 =================
+
+/// GPIO 端口寄存器访问面（驱动所需字段的最小集合 + 复用设置）。
+///
+/// 各家族端口结构体实现本特征；复用寄存器按端口实际具备的段实现
+/// （如 F030 的 GPIOC 仅 AFRH——高脚复用，低脚无复用能力）。
+pub trait GpioPort: 'static {
+    /// 端口中断槽位（0..3 = A/B/C/F，按基地址判定——L012 四端口共用
+    /// 一个结构体类型，无法用关联常量区分）
+    fn bank(&self) -> usize;
+    /// 读寄存器
+    fn rd(&self, r: Reg) -> u32;
+    /// 写寄存器
+    fn wr(&self, r: Reg, v: u32);
+    /// 读改写寄存器
+    fn mod_(&self, r: Reg, f: impl FnOnce(u32) -> u32);
+    /// 设置复用功能（AFRL pin0..7 / AFRH pin8..15，每脚 4bit；
+    /// 端口不具备对应段时 panic）
+    fn set_af(&self, pin: u8, af: u8);
+}
+
+/// 驱动用到的端口寄存器（功能式访问,隔离各 PAC 字段类型差异：
+/// 如 F030 头文件把 ISR/ICR/IDR/BRR 都标成 RW,而 L012 是 Ro/Wo）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reg {
+    /// 方向(1=输入)
+    Dir,
+    /// 模拟开关
+    Analog,
+    /// 下拉
+    Pdr,
+    /// 上拉
+    Pur,
+    /// 上升沿使能
+    Riseie,
+    /// 下降沿使能
+    Fallie,
+    /// 中断标志
+    Isr,
+    /// 中断清零
+    Icr,
+    /// 输入数据
+    Idr,
+    /// 输出数据
+    Odr,
+    /// 位清零
+    Brr,
+    /// 位置位清零
+    Bsrr,
+    /// 位翻转
+    Tog,
+}
+
+macro_rules! impl_port {
+    ($typ:ty, $bank:expr, $isr:ident, $icr:ident, $idr:ident, $brr:ident) => {
+        fn bank(&self) -> usize {
+            $bank(self)
+        }
+        fn rd(&self, r: Reg) -> u32 {
+            match r {
+                Reg::Dir => self.dir.read(),
+                Reg::Analog => self.analog.read(),
+                Reg::Pdr => self.pdr.read(),
+                Reg::Pur => self.pur.read(),
+                Reg::Riseie => self.riseie.read(),
+                Reg::Fallie => self.fallie.read(),
+                Reg::Isr => self.$isr.read(),
+                Reg::Idr => self.$idr.read(),
+                Reg::Odr => self.odr.read(),
+                _ => unreachable!("只写寄存器不可读"),
+            }
+        }
+        fn wr(&self, r: Reg, v: u32) {
+            match r {
+                Reg::Dir => self.dir.write(v),
+                Reg::Analog => self.analog.write(v),
+                Reg::Pdr => self.pdr.write(v),
+                Reg::Pur => self.pur.write(v),
+                Reg::Riseie => self.riseie.write(v),
+                Reg::Fallie => self.fallie.write(v),
+                Reg::Icr => self.$icr.write(v),
+                Reg::Brr => self.$brr.write(v),
+                Reg::Bsrr => self.bsrr.write(v),
+                Reg::Tog => self.tog.write(v),
+                _ => unreachable!("只读寄存器不可写"),
+            }
+        }
+        fn mod_(&self, r: Reg, f: impl FnOnce(u32) -> u32) {
+            match r {
+                Reg::Dir => self.dir.modify(f),
+                Reg::Analog => self.analog.modify(f),
+                Reg::Pdr => self.pdr.modify(f),
+                Reg::Pur => self.pur.modify(f),
+                Reg::Riseie => self.riseie.modify(f),
+                Reg::Fallie => self.fallie.modify(f),
+                Reg::Odr => self.odr.modify(f),
+                _ => unreachable!("该寄存器只支持读/写"),
+            }
+        }
+    };
+}
+
+#[cfg(feature = "cw32l012")]
+impl GpioPort for pac::Gpio {
+    impl_port!(
+        pac::Gpio,
+        |s: &Self| match s as *const _ as usize {
+            pac::GPIOA_BASE => 0,
+            pac::GPIOB_BASE => 1,
+            pac::GPIOC_BASE => 2,
+            _ => 3,
+        },
+        isr,
+        icr,
+        idr,
+        brr
+    );
+    fn set_af(&self, pin: u8, af: u8) {
+        set_af_impl(Some(&self.afrl), Some(&self.afrh), pin, af)
+    }
+}
+
+#[cfg(feature = "cw32f030")]
+impl GpioPort for pac::GPIO {
+    impl_port!(
+        pac::GPIO,
+        |s: &Self| match s as *const _ as usize {
+            pac::GPIOA_BASE => 0,
+            pac::GPIOB_BASE => 1,
+            _ => unreachable!("GPIO 基地址不在 A/B"),
+        },
+        isr,
+        icr,
+        idr,
+        brr
+    );
+    fn set_af(&self, pin: u8, af: u8) {
+        set_af_impl(Some(&self.afrl), Some(&self.afrh), pin, af)
+    }
+}
+
+#[cfg(feature = "cw32f030")]
+impl GpioPort for pac::GPIOC {
+    impl_port!(pac::GPIOC, |_s: &Self| 2, isr, icr, idr, brr);
+    fn set_af(&self, pin: u8, af: u8) {
+        assert!(pin >= 8, "GPIOC 低脚无复用功能");
+        set_af_impl(None, Some(&self.afrh), pin, af)
+    }
+}
+
+#[cfg(feature = "cw32f030")]
+impl GpioPort for pac::GPIOF {
+    impl_port!(pac::GPIOF, |_s: &Self| 3, isr, icr, idr, brr);
+    fn set_af(&self, pin: u8, af: u8) {
+        assert!(pin < 8, "GPIOF 高脚无复用功能");
+        set_af_impl(Some(&self.afrl), None, pin, af)
+    }
+}
+
+/// AFRL/AFRH 公共写入（缺失的段传 `None`——对应脚位范围不存在，
+/// 例如 F030 的 GPIOC 无低脚、GPIOF 无高脚）
+fn set_af_impl(
+    afrl: Option<&crate::pac::Rw<u32>>,
+    afrh: Option<&crate::pac::Rw<u32>>,
+    pin: u8,
+    af: u8,
+) {
+    let m4 = 0xF << ((pin % 8) * 4);
+    let v4 = ((af as u32) & 0xF) << ((pin % 8) * 4);
+    if pin < 8 {
+        afrl.expect("该端口无 AFRL(低脚无复用)")
+            .modify(|v| (v & !m4) | v4);
+    } else {
+        afrh.expect("该端口无 AFRH(高脚无复用)")
+            .modify(|v| (v & !m4) | v4);
+    }
+}
+
+// ================= 引脚 =================
+
+/// 引脚（端口 + 编号;端口泛型保证寄存器访问面）
+pub struct Pin<P: GpioPort> {
+    port: &'static P,
     pin: u8,
 }
 
-impl Pin {
+impl<P: GpioPort> Pin<P> {
     /// 绑定端口与引脚号（0..15，须与封装实际可用引脚一致）
-    pub fn new(gpio: &'static pac::Gpio, pin: u8) -> Self {
+    pub fn new(port: &'static P, pin: u8) -> Self {
         assert!(pin < 16);
-        Self { gpio, pin }
+        Self { port, pin }
     }
 
     /// 引脚位掩码
@@ -37,41 +220,23 @@ impl Pin {
         1 << self.pin
     }
 
-    /// 设置复用功能（AFRL pin0..7 / AFRH pin8..15，每脚 4bit）
+    /// 设置复用功能（转发给端口实现）
     pub fn set_af(&self, af: u8) {
-        let m4 = 0xF << ((self.pin % 8) * 4);
-        let v4 = ((af as u32) & 0xF) << ((self.pin % 8) * 4);
-        if self.pin < 8 {
-            self.gpio.afrl.modify(|v| (v & !m4) | v4);
-        } else {
-            self.gpio.afrh.modify(|v| (v & !m4) | v4);
-        }
-    }
-
-    /// 端口索引（0..3 = A/B/C/F，用于 waker 表）
-    fn bank(&self) -> usize {
-        let addr = self.gpio as *const _ as usize;
-        match addr {
-            pac::GPIOA_BASE => 0,
-            pac::GPIOB_BASE => 1,
-            pac::GPIOC_BASE => 2,
-            pac::GPIOF_BASE => 3,
-            _ => unreachable!("非 GPIO 端口寄存器块"),
-        }
+        self.port.set_af(self.pin, af);
     }
 }
 
 /// 上/下拉配置。
 ///
-/// ⚠ 下拉仅 PF3 有实际电阻（UM V1.4 §9.6.3，复位值 `PDR=0x0000_0008`），
-/// 其余引脚 [`Pull::Down`] 等同 [`Pull::None`]。
+/// ⚠ 下拉仅 PF3 有实际电阻（L012 手册 §9.6.3），其余引脚
+/// [`Pull::Down`] 等同 [`Pull::None`]。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pull {
     /// 浮空
     None,
     /// 上拉
     Up,
-    /// 下拉（仅 PF3 有效）
+    /// 下拉（仅 L012 的 PF3 有效）
     Down,
 }
 
@@ -94,36 +259,39 @@ impl Level {
     }
 }
 
+// ================= 输出 =================
+
 /// 数字输出（推挽）。
-pub struct Output {
-    pin: Pin,
+pub struct Output<P: GpioPort> {
+    pin: Pin<P>,
 }
 
-impl Output {
+impl<P: GpioPort> Output<P> {
     /// 配置为推挽输出（方向 DIR=0、数字模式 ANALOG=0），并置初始电平。
-    pub fn new(pin: Pin, initial: Level) -> Self {
-        pin.gpio.analog.modify(|v| v & !pin.mask());
-        pin.gpio.dir.modify(|v| v & !pin.mask());
+    pub fn new(pin: Pin<P>, initial: Level) -> Self {
+        let m = pin.mask();
+        pin.port.mod_(Reg::Analog, |v| v & !m);
+        pin.port.mod_(Reg::Dir, |v| v & !m);
         match initial {
-            Level::Low => pin.gpio.brr.write(pin.mask()),
-            Level::High => pin.gpio.bsrr.write(pin.mask()),
+            Level::Low => pin.port.wr(Reg::Brr, m),
+            Level::High => pin.port.wr(Reg::Bsrr, m),
         }
         Self { pin }
     }
 
     /// 置高（BSRR 原子置位）
     pub fn set_high(&mut self) {
-        self.pin.gpio.bsrr.write(self.pin.mask());
+        self.pin.port.wr(Reg::Bsrr, self.pin.mask());
     }
 
     /// 置低（BRR 原子清零）
     pub fn set_low(&mut self) {
-        self.pin.gpio.brr.write(self.pin.mask());
+        self.pin.port.wr(Reg::Brr, self.pin.mask());
     }
 
     /// 翻转（TOG 原子翻转）
     pub fn toggle(&mut self) {
-        self.pin.gpio.tog.write(self.pin.mask());
+        self.pin.port.wr(Reg::Tog, self.pin.mask());
     }
 
     /// 设置电平
@@ -136,7 +304,7 @@ impl Output {
 
     /// 读回输出锁存电平（ODR）
     pub fn get_output_level(&self) -> Level {
-        if self.pin.gpio.odr.read() & self.pin.mask() != 0 {
+        if self.pin.port.rd(Reg::Odr) & self.pin.mask() != 0 {
             Level::High
         } else {
             Level::Low
@@ -144,16 +312,16 @@ impl Output {
     }
 
     /// 释放引脚
-    pub fn into_pin(self) -> Pin {
+    pub fn into_pin(self) -> Pin<P> {
         self.pin
     }
 }
 
-impl embedded_hal::digital::ErrorType for Output {
+impl<P: GpioPort> embedded_hal::digital::ErrorType for Output<P> {
     type Error = core::convert::Infallible;
 }
 
-impl embedded_hal::digital::OutputPin for Output {
+impl<P: GpioPort> embedded_hal::digital::OutputPin for Output<P> {
     fn set_low(&mut self) -> Result<(), Self::Error> {
         Output::set_low(self);
         Ok(())
@@ -164,7 +332,7 @@ impl embedded_hal::digital::OutputPin for Output {
     }
 }
 
-impl embedded_hal::digital::StatefulOutputPin for Output {
+impl<P: GpioPort> embedded_hal::digital::StatefulOutputPin for Output<P> {
     fn is_set_high(&mut self) -> Result<bool, Self::Error> {
         Ok(self.get_output_level() == Level::High)
     }
@@ -176,8 +344,8 @@ impl embedded_hal::digital::StatefulOutputPin for Output {
 // ================= 异步输入 =================
 
 /// 数字输入（可上/下拉）。异步等待边沿与电平。
-pub struct Input {
-    pin: Pin,
+pub struct Input<P: GpioPort> {
+    pin: Pin<P>,
 }
 
 /// 每端口 16 引脚的 waker 表
@@ -188,24 +356,24 @@ static WAKERS: [[AtomicWaker; 16]; 4] = [const { [const { AtomicWaker::new() }; 
 static TRIGGERED: [core::sync::atomic::AtomicU32; 4] =
     [const { core::sync::atomic::AtomicU32::new(0) }; 4];
 
-impl Input {
+impl<P: GpioPort> Input<P> {
     /// 配置为数字输入（DIR=1、ANALOG=0）并设置上/下拉。
-    pub fn new(pin: Pin, pull: Pull) -> Self {
-        pin.gpio.analog.modify(|v| v & !pin.mask());
-        pin.gpio.dir.modify(|v| v | pin.mask());
+    pub fn new(pin: Pin<P>, pull: Pull) -> Self {
+        let m = pin.mask();
+        pin.port.mod_(Reg::Analog, |v| v & !m);
+        pin.port.mod_(Reg::Dir, |v| v | m);
         match pull {
             Pull::None => {
-                pin.gpio.pur.modify(|v| v & !pin.mask());
-                pin.gpio.pdr.modify(|v| v & !pin.mask());
+                pin.port.mod_(Reg::Pur, |v| v & !m);
+                pin.port.mod_(Reg::Pdr, |v| v & !m);
             }
             Pull::Up => {
-                pin.gpio.pur.modify(|v| v | pin.mask());
-                pin.gpio.pdr.modify(|v| v & !pin.mask());
+                pin.port.mod_(Reg::Pur, |v| v | m);
+                pin.port.mod_(Reg::Pdr, |v| v & !m);
             }
             Pull::Down => {
-                // 仅 PF3 有实际下拉（见 Pull::Down 文档）
-                pin.gpio.pur.modify(|v| v & !pin.mask());
-                pin.gpio.pdr.modify(|v| v | pin.mask());
+                pin.port.mod_(Reg::Pur, |v| v & !m);
+                pin.port.mod_(Reg::Pdr, |v| v | m);
             }
         }
         Self { pin }
@@ -213,7 +381,7 @@ impl Input {
 
     /// 当前电平（IDR）
     pub fn get_level(&self) -> Level {
-        if self.pin.gpio.idr.read() & self.pin.mask() != 0 {
+        if self.pin.port.rd(Reg::Idr) & self.pin.mask() != 0 {
             Level::High
         } else {
             Level::Low
@@ -221,7 +389,7 @@ impl Input {
     }
 
     /// 释放引脚
-    pub fn into_pin(self) -> Pin {
+    pub fn into_pin(self) -> Pin<P> {
         self.pin
     }
 
@@ -238,52 +406,6 @@ impl Input {
     /// 等待下降沿。
     pub async fn wait_for_falling_edge(&mut self) {
         self.wait_edge(false, true).await;
-    }
-
-    /// 边沿等待公共实现。
-    async fn wait_edge(&mut self, rise: bool, fall: bool) {
-        let m = self.pin.mask();
-        let bank = self.pin.bank();
-        let gpio = self.pin.gpio;
-        // 使能 NVIC 中断线（v0.1 遗漏：向量有了但 ISER 没开）
-        match bank {
-            0 => crate::pac::Interrupt::GpioA.enable(),
-            1 => crate::pac::Interrupt::GpioB.enable(),
-            2 => crate::pac::Interrupt::GpioC.enable(),
-            _ => crate::pac::Interrupt::GpioF.enable(),
-        }
-        // 清历史标志、清软件触发位，再挂边沿中断
-        critical_section::with(|_| {
-            gpio.icr.write(m);
-            TRIGGERED[bank].store(
-                TRIGGERED[bank].load(Ordering::Relaxed) & !m,
-                Ordering::Relaxed,
-            );
-        });
-        if rise {
-            gpio.riseie.modify(|v| v | m);
-        }
-        if fall {
-            gpio.fallie.modify(|v| v | m);
-        }
-        poll_fn(|cx| {
-            WAKERS[bank][self.pin.pin as usize].register(cx.waker());
-            let hit = critical_section::with(|_| {
-                let t = TRIGGERED[bank].load(Ordering::Relaxed);
-                if t & m != 0 {
-                    TRIGGERED[bank].store(t & !m, Ordering::Relaxed);
-                    true
-                } else {
-                    false
-                }
-            });
-            if hit { Poll::Ready(()) } else { Poll::Pending }
-        })
-        .await;
-        // 摘除中断使能并清标志
-        gpio.riseie.modify(|v| v & !m);
-        gpio.fallie.modify(|v| v & !m);
-        gpio.icr.write(m);
     }
 
     /// 等待高电平（边沿触发 + 电平复查）。
@@ -305,13 +427,57 @@ impl Input {
             self.wait_for_any_edge().await;
         }
     }
+
+    /// 边沿等待公共实现。
+    async fn wait_edge(&mut self, rise: bool, fall: bool) {
+        let m = self.pin.mask();
+        let port = self.pin.port;
+        let bank = port.bank();
+        // 使能 NVIC 中断线（按槽位;GPIOA..F 在两代家族中断号相同布局）
+        match bank {
+            0 => crate::interrupt::nvic_enable::<interrupt::GPIOA>(),
+            1 => crate::interrupt::nvic_enable::<interrupt::GPIOB>(),
+            2 => crate::interrupt::nvic_enable::<interrupt::GPIOC>(),
+            _ => crate::interrupt::nvic_enable::<interrupt::GPIOF>(),
+        }
+        critical_section::with(|_| {
+            port.wr(Reg::Icr, m);
+            TRIGGERED[bank].store(
+                TRIGGERED[bank].load(Ordering::Relaxed) & !m,
+                Ordering::Relaxed,
+            );
+        });
+        if rise {
+            port.mod_(Reg::Riseie, |v| v | m);
+        }
+        if fall {
+            port.mod_(Reg::Fallie, |v| v | m);
+        }
+        poll_fn(|cx| {
+            WAKERS[bank][self.pin.pin as usize].register(cx.waker());
+            let hit = critical_section::with(|_| {
+                let t = TRIGGERED[bank].load(Ordering::Relaxed);
+                if t & m != 0 {
+                    TRIGGERED[bank].store(t & !m, Ordering::Relaxed);
+                    true
+                } else {
+                    false
+                }
+            });
+            if hit { Poll::Ready(()) } else { Poll::Pending }
+        })
+        .await;
+        port.mod_(Reg::Riseie, |v| v & !m);
+        port.mod_(Reg::Fallie, |v| v & !m);
+        port.wr(Reg::Icr, m);
+    }
 }
 
-impl embedded_hal::digital::ErrorType for Input {
+impl<P: GpioPort> embedded_hal::digital::ErrorType for Input<P> {
     type Error = core::convert::Infallible;
 }
 
-impl embedded_hal::digital::InputPin for Input {
+impl<P: GpioPort> embedded_hal::digital::InputPin for Input<P> {
     fn is_high(&mut self) -> Result<bool, Self::Error> {
         Ok(self.get_level() == Level::High)
     }
@@ -323,13 +489,13 @@ impl embedded_hal::digital::InputPin for Input {
 // ================= 端口中断派发 =================
 
 /// 端口中断公共处理：置软件触发位、清硬件标志、按位唤醒。
-fn on_irq(bank: usize, gpio: &'static pac::Gpio) {
-    let pending = gpio.isr.read();
+pub(crate) fn on_irq(bank: usize, port: &impl GpioPort) {
+    let pending = port.rd(Reg::Isr);
     critical_section::with(|_| {
         let t = TRIGGERED[bank].load(Ordering::Relaxed);
         TRIGGERED[bank].store(t | pending, Ordering::Relaxed);
     });
-    gpio.icr.write(pending); // 写 1 清除
+    port.wr(Reg::Icr, pending);
     for (i, w) in WAKERS[bank].iter().enumerate() {
         if pending & (1 << i) != 0 {
             w.wake();
@@ -337,38 +503,34 @@ fn on_irq(bank: usize, gpio: &'static pac::Gpio) {
     }
 }
 
-/// GPIOA 中断标记（IRQ5）
-pub struct GpioAIrq;
-impl IrqHandler<interrupt::GPIOA> for GpioAIrq {
-    fn call() {
-        let gpio = unsafe { &*(pac::GPIOA_BASE as *const pac::Gpio) };
-        on_irq(0, gpio);
-    }
+/// 生成端口中断标记类型与派发
+macro_rules! port_irq {
+    ($irq:ident, $handler:ident, $typ:ty, $base:expr, $bank:expr) => {
+        /// 端口中断标记（bind_interrupts! 绑定用）
+        pub struct $handler;
+        impl IrqHandler<interrupt::$irq> for $handler {
+            fn call() {
+                let port: &$typ = unsafe { &*($base as *const $typ) };
+                on_irq($bank, port);
+            }
+        }
+    };
 }
 
-/// GPIOB 中断标记（IRQ6）
-pub struct GpioBIrq;
-impl IrqHandler<interrupt::GPIOB> for GpioBIrq {
-    fn call() {
-        let gpio = unsafe { &*(pac::GPIOB_BASE as *const pac::Gpio) };
-        on_irq(1, gpio);
-    }
-}
+#[cfg(feature = "cw32l012")]
+port_irq!(GPIOA, GpioAIrq, pac::Gpio, pac::GPIOA_BASE, 0);
+#[cfg(feature = "cw32l012")]
+port_irq!(GPIOB, GpioBIrq, pac::Gpio, pac::GPIOB_BASE, 1);
+#[cfg(feature = "cw32l012")]
+port_irq!(GPIOC, GpioCIrq, pac::Gpio, pac::GPIOC_BASE, 2);
+#[cfg(feature = "cw32l012")]
+port_irq!(GPIOF, GpioFIrq, pac::Gpio, pac::GPIOF_BASE, 3);
 
-/// GPIOC 中断标记（IRQ7）
-pub struct GpioCIrq;
-impl IrqHandler<interrupt::GPIOC> for GpioCIrq {
-    fn call() {
-        let gpio = unsafe { &*(pac::GPIOC_BASE as *const pac::Gpio) };
-        on_irq(2, gpio);
-    }
-}
-
-/// GPIOF 中断标记（IRQ8）
-pub struct GpioFIrq;
-impl IrqHandler<interrupt::GPIOF> for GpioFIrq {
-    fn call() {
-        let gpio = unsafe { &*(pac::GPIOF_BASE as *const pac::Gpio) };
-        on_irq(3, gpio);
-    }
-}
+#[cfg(feature = "cw32f030")]
+port_irq!(GPIOA, GpioAIrq, pac::GPIO, pac::GPIOA_BASE, 0);
+#[cfg(feature = "cw32f030")]
+port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOB_BASE, 1);
+#[cfg(feature = "cw32f030")]
+port_irq!(GPIOC, GpioCIrq, pac::GPIOC, pac::GPIOC_BASE, 2);
+#[cfg(feature = "cw32f030")]
+port_irq!(GPIOF, GpioFIrq, pac::GPIOF, pac::GPIOF_BASE, 3);

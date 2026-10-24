@@ -13,7 +13,7 @@ use core::task::Poll;
 
 use embassy_sync::waitqueue::AtomicWaker;
 
-use crate::gpio::Pin;
+use crate::gpio::{GpioPort, Pin};
 use crate::interrupt::{Binding, IrqHandler, interrupt};
 use crate::pac::{self, i2c as ic};
 
@@ -130,8 +130,8 @@ impl I2c {
     /// 初始化 I2C 主机并配置引脚（开漏复用由 PINCFG=OD_IO 处理）。
     pub fn new(
         regs: &'static pac::I2c,
-        scl: Pin,
-        sda: Pin,
+        scl: Pin<impl GpioPort>,
+        sda: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::I2C1> + Binding<interrupt::I2C2>,
         config: Config,
@@ -142,8 +142,8 @@ impl I2c {
     /// 初始化 I2C1（IRQ 绑定收窄到 I2C1）。
     pub fn new_i2c1(
         regs: &'static pac::I2c,
-        scl: Pin,
-        sda: Pin,
+        scl: Pin<impl GpioPort>,
+        sda: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::I2C1>,
         config: Config,
@@ -154,8 +154,8 @@ impl I2c {
     /// 初始化 I2C2（IRQ 绑定收窄到 I2C2）。
     pub fn new_i2c2(
         regs: &'static pac::I2c,
-        scl: Pin,
-        sda: Pin,
+        scl: Pin<impl GpioPort>,
+        sda: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::I2C2>,
         config: Config,
@@ -163,7 +163,13 @@ impl I2c {
         Self::new_inner(regs, scl, sda, af, config)
     }
 
-    fn new_inner(regs: &'static pac::I2c, scl: Pin, sda: Pin, af: u8, config: Config) -> Self {
+    fn new_inner(
+        regs: &'static pac::I2c,
+        scl: Pin<impl GpioPort>,
+        sda: Pin<impl GpioPort>,
+        af: u8,
+        config: Config,
+    ) -> Self {
         let idx = instance_of(regs);
         let sysctrl = unsafe { &*(pac::SYSCTRL_BASE as *const pac::Sysctrl) };
         let gate = if idx == 0 {

@@ -19,9 +19,74 @@ use embassy_sync::pipe::Pipe;
 use embassy_sync::waitqueue::AtomicWaker;
 use embedded_io_async as embedded_io;
 
-use crate::gpio::Pin;
+use crate::gpio::{GpioPort, Pin};
 use crate::interrupt::{Binding, IrqHandler, interrupt};
-use crate::pac::{self, uart as ub};
+use crate::pac;
+
+// ================= 家族位常量面 =================
+// 两代共用位:TXBE=0 / TC=1 / RC=2;错误位不同(L012 FE8/PE9/NE10/ORE11,
+// F030 经典 FE3/PE4 且无 NE/ORE 标志)。ICR 两代均为 R1W0(写 0 清除):
+// L012 依据 UM V1.4;F030 依据厂商库 cw32f030_uart.c 的 REGBITS_CLR(ICR, flag)。
+#[cfg(feature = "cw32l012")]
+pub(crate) mod ub {
+    pub use crate::pac::uart::*;
+    /// 全部接收错误位掩码(L012:ORE|NE|PE|FE)
+    pub const ERR_ALL: u32 = ISR_ORE | ISR_NE | ISR_PE | ISR_FE;
+    /// 接收就绪 + 全部错误位
+    pub const RX_ALL: u32 = ISR_RC | ERR_ALL;
+    /// 错误种类解码(L012 含 NE/ORE)
+    pub fn decode_error(isr: u32) -> Option<super::UartError> {
+        if isr & ISR_ORE != 0 {
+            Some(super::UartError::Overrun)
+        } else if isr & ISR_FE != 0 {
+            Some(super::UartError::Framing)
+        } else if isr & ISR_PE != 0 {
+            Some(super::UartError::Parity)
+        } else if isr & ISR_NE != 0 {
+            Some(super::UartError::Noise)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(feature = "cw32f030")]
+pub(crate) mod ub {
+    use crate::pac::uart as raw;
+    /// 发送缓冲空(ISR/IER bit0)
+    pub const ISR_TXBE: u32 = raw::isr::txe_MASK;
+    /// 发送完成(bit1)
+    pub const ISR_TC: u32 = raw::isr::tc_MASK;
+    /// 接收完成(bit2)
+    pub const ISR_RC: u32 = raw::isr::rc_MASK;
+    /// 帧错误(bit3)
+    pub const ISR_FE: u32 = raw::isr::fe_MASK;
+    /// 校验错(bit4)
+    pub const ISR_PE: u32 = raw::isr::pe_MASK;
+    /// 发送使能
+    pub const CR1_TXEN: u32 = raw::cr1::txen_MASK;
+    /// 接收使能
+    pub const CR1_RXEN: u32 = raw::cr1::rxen_MASK;
+    /// R1W0 全 1(无动作)基准
+    pub const ICR_NONE: u32 = 0x1FFF;
+    /// 全部接收错误位掩码(经典:FE|PE)
+    pub const ERR_ALL: u32 = ISR_FE | ISR_PE;
+    /// 接收就绪 + 全部错误位
+    pub const RX_ALL: u32 = ISR_RC | ERR_ALL;
+    /// 清全部接收错误(R1W0:错误位写 0)
+    pub const ICR_CLEAR_RX_ERRORS: u32 = ICR_NONE & !(ISR_FE | ISR_PE);
+
+    /// 错误种类解码(经典 UART 仅 FE/PE)
+    pub fn decode_error(isr: u32) -> Option<super::UartError> {
+        if isr & ISR_FE != 0 {
+            Some(super::UartError::Framing)
+        } else if isr & ISR_PE != 0 {
+            Some(super::UartError::Parity)
+        } else {
+            None
+        }
+    }
+}
 
 /// UART 配置（固定 8-N-1）
 #[derive(Debug, Clone, Copy)]
@@ -69,7 +134,7 @@ impl embedded_io::Error for UartError {
 }
 
 /// 实例索引（0/1/2 = UART1/2/3）
-fn instance_of(regs: &'static pac::Uart) -> usize {
+fn instance_of(regs: &'static crate::Uart) -> usize {
     match regs as *const _ as usize {
         pac::UART1_BASE => 0,
         pac::UART2_BASE => 1,
@@ -84,19 +149,19 @@ static RX_WAKER: [AtomicWaker; 3] = [const { AtomicWaker::new() }; 3];
 
 /// 异步 UART（整体）
 pub struct Uart {
-    regs: &'static pac::Uart,
+    regs: &'static crate::Uart,
     idx: usize,
 }
 
 /// 异步 UART 发送半部
 pub struct UartTx {
-    regs: &'static pac::Uart,
+    regs: &'static crate::Uart,
     idx: usize,
 }
 
 /// 异步 UART 接收半部
 pub struct UartRx {
-    regs: &'static pac::Uart,
+    regs: &'static crate::Uart,
     idx: usize,
 }
 
@@ -115,9 +180,9 @@ impl Uart {
     /// * `tx` / `rx` — 引脚（内部自动 `set_af(af)`）
     /// * `_irqs` — 中断绑定证明（`bind_interrupts!` 生成的结构体）
     pub fn new(
-        regs: &'static pac::Uart,
-        tx: Pin,
-        rx: Pin,
+        regs: &'static crate::Uart,
+        tx: Pin<impl GpioPort>,
+        rx: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::UART1> + Binding<interrupt::UART2> + Binding<interrupt::UART3>,
         config: Config,
@@ -127,9 +192,9 @@ impl Uart {
 
     /// 初始化 UART1（IRQ 绑定类型收窄到 UART1）。
     pub fn new_uart1(
-        regs: &'static pac::Uart,
-        tx: Pin,
-        rx: Pin,
+        regs: &'static crate::Uart,
+        tx: Pin<impl GpioPort>,
+        rx: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::UART1>,
         config: Config,
@@ -139,9 +204,9 @@ impl Uart {
 
     /// 初始化 UART2（IRQ 绑定类型收窄到 UART2）。
     pub fn new_uart2(
-        regs: &'static pac::Uart,
-        tx: Pin,
-        rx: Pin,
+        regs: &'static crate::Uart,
+        tx: Pin<impl GpioPort>,
+        rx: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::UART2>,
         config: Config,
@@ -151,9 +216,9 @@ impl Uart {
 
     /// 初始化 UART3（IRQ 绑定类型收窄到 UART3）。
     pub fn new_uart3(
-        regs: &'static pac::Uart,
-        tx: Pin,
-        rx: Pin,
+        regs: &'static crate::Uart,
+        tx: Pin<impl GpioPort>,
+        rx: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::UART3>,
         config: Config,
@@ -161,16 +226,34 @@ impl Uart {
         Self::new_inner(regs, tx, rx, af, config)
     }
 
-    fn new_inner(regs: &'static pac::Uart, tx: Pin, rx: Pin, af: u8, config: Config) -> Self {
+    fn new_inner(
+        regs: &'static crate::Uart,
+        tx: Pin<impl GpioPort>,
+        rx: Pin<impl GpioPort>,
+        af: u8,
+        config: Config,
+    ) -> Self {
         let idx = instance_of(regs);
-        // 使能 APB1 时钟（KEY 保护写）
-        let sysctrl = unsafe { &*(pac::SYSCTRL_BASE as *const pac::Sysctrl) };
-        let gate = match idx {
-            0 => pac::sysctrl::APBEN1_UART1,
-            1 => pac::sysctrl::APBEN1_UART2,
-            _ => pac::sysctrl::APBEN1_UART3,
-        };
-        sysctrl.apben1.write(pac::sysctrl::KEY | gate);
+        // 使能 UART 时钟（KEY 保护写）;两代门控位不同:
+        // L012 全在 APBEN1(bit3/4/8);F030:UART1=APBEN2.9、UART2=APBEN1.7、UART3=APBEN1.8
+        let sysctrl = unsafe { &*(pac::SYSCTRL_BASE as *const crate::Sysctrl) };
+        #[cfg(feature = "cw32l012")]
+        {
+            let gate = match idx {
+                0 => pac::sysctrl::APBEN1_UART1,
+                1 => pac::sysctrl::APBEN1_UART2,
+                _ => pac::sysctrl::APBEN1_UART3,
+            };
+            sysctrl.apben1.write(pac::sysctrl::KEY | gate);
+        }
+        #[cfg(feature = "cw32f030")]
+        {
+            match idx {
+                0 => sysctrl.apben2.write(crate::SYSCTRL_KEY | (1 << 9)),
+                1 => sysctrl.apben1.write(crate::SYSCTRL_KEY | (1 << 7)),
+                _ => sysctrl.apben1.write(crate::SYSCTRL_KEY | (1 << 8)),
+            }
+        }
 
         // 引脚复用（数字模式、方向交给外设）
         tx.set_af(af);
@@ -190,9 +273,9 @@ impl Uart {
         // v0.1 遗漏修复：使能 NVIC 中断线（向量有了但 ISER 没开，
         // 任何 UART 中断都进不来——2026-10-24 移植缓冲驱动时发现）
         match idx {
-            0 => crate::pac::Interrupt::Uart1.enable(),
-            1 => crate::pac::Interrupt::Uart2.enable(),
-            _ => crate::pac::Interrupt::Uart3.enable(),
+            0 => crate::interrupt::nvic_enable::<interrupt::UART1>(),
+            1 => crate::interrupt::nvic_enable::<interrupt::UART2>(),
+            _ => crate::interrupt::nvic_enable::<interrupt::UART3>(),
         }
 
         Self { regs, idx }
@@ -257,7 +340,7 @@ impl UartRx {
         poll_fn(|cx| {
             RX_WAKER[self.idx].register(cx.waker());
             let isr = self.regs.isr.read();
-            if isr & (ub::ISR_RC | ub::ISR_ORE | ub::ISR_NE | ub::ISR_PE | ub::ISR_FE) != 0 {
+            if isr & (ub::RX_ALL) != 0 {
                 Poll::Ready(())
             } else {
                 self.regs.ier.modify(|v| v | ub::ISR_RC);
@@ -266,17 +349,7 @@ impl UartRx {
         })
         .await;
         let isr = self.regs.isr.read();
-        let err = if isr & ub::ISR_ORE != 0 {
-            Some(UartError::Overrun)
-        } else if isr & ub::ISR_FE != 0 {
-            Some(UartError::Framing)
-        } else if isr & ub::ISR_PE != 0 {
-            Some(UartError::Parity)
-        } else if isr & ub::ISR_NE != 0 {
-            Some(UartError::Noise)
-        } else {
-            None
-        };
+        let err = ub::decode_error(isr);
         if let Some(e) = err {
             self.regs.icr.write(ub::ICR_CLEAR_RX_ERRORS);
             return Err(e);
@@ -372,10 +445,8 @@ static BUFFERED: [core::sync::atomic::AtomicBool; 3] =
     [const { core::sync::atomic::AtomicBool::new(false) }; 3];
 
 /// 收/发管道（IRQ 生产 RX、排空 TX；任务侧 await 读写）
-static RX_PIPE: [Pipe<CriticalSectionRawMutex, BUFFER_CAPACITY>; 3] =
-    [const { Pipe::new() }; 3];
-static TX_PIPE: [Pipe<CriticalSectionRawMutex, BUFFER_CAPACITY>; 3] =
-    [const { Pipe::new() }; 3];
+static RX_PIPE: [Pipe<CriticalSectionRawMutex, BUFFER_CAPACITY>; 3] = [const { Pipe::new() }; 3];
+static TX_PIPE: [Pipe<CriticalSectionRawMutex, BUFFER_CAPACITY>; 3] = [const { Pipe::new() }; 3];
 
 /// 发送活跃标记（kick 置位，IRQ 排空后清零）
 static TX_ACTIVE: [core::sync::atomic::AtomicBool; 3] =
@@ -398,13 +469,13 @@ static RX_DROPPED: [core::sync::atomic::AtomicU32; 3] =
 /// 纪律、写 TDR 前清 TC 防陈旧标志误触 flush；环形缓冲改用
 /// embassy-sync `Pipe` 实现。
 pub struct BufferedUart {
-    regs: &'static pac::Uart,
+    regs: &'static crate::Uart,
     idx: usize,
 }
 
 /// 缓冲式发送半部
 pub struct BufferedUartTx {
-    regs: &'static pac::Uart,
+    regs: &'static crate::Uart,
     idx: usize,
 }
 
@@ -416,9 +487,9 @@ pub struct BufferedUartRx {
 impl BufferedUart {
     /// 初始化 UART1 缓冲式驱动（8-N-1）。
     pub fn new_uart1(
-        regs: &'static pac::Uart,
-        tx: Pin,
-        rx: Pin,
+        regs: &'static crate::Uart,
+        tx: Pin<impl GpioPort>,
+        rx: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::UART1>,
         config: Config,
@@ -429,9 +500,9 @@ impl BufferedUart {
 
     /// 初始化 UART2 缓冲式驱动。
     pub fn new_uart2(
-        regs: &'static pac::Uart,
-        tx: Pin,
-        rx: Pin,
+        regs: &'static crate::Uart,
+        tx: Pin<impl GpioPort>,
+        rx: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::UART2>,
         config: Config,
@@ -442,9 +513,9 @@ impl BufferedUart {
 
     /// 初始化 UART3 缓冲式驱动。
     pub fn new_uart3(
-        regs: &'static pac::Uart,
-        tx: Pin,
-        rx: Pin,
+        regs: &'static crate::Uart,
+        tx: Pin<impl GpioPort>,
+        rx: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::UART3>,
         config: Config,
@@ -454,18 +525,19 @@ impl BufferedUart {
     }
 
     /// 缓冲模式收尾：置标记 + 常开接收中断
-    fn finish(regs: &'static pac::Uart, idx: usize) -> Self {
+    fn finish(regs: &'static crate::Uart, idx: usize) -> Self {
         BUFFERED[idx].store(true, core::sync::atomic::Ordering::Relaxed);
-        regs.ier.write(
-            ub::ISR_RC | ub::ISR_ORE | ub::ISR_NE | ub::ISR_PE | ub::ISR_FE,
-        );
+        regs.ier.write(ub::RX_ALL);
         Self { regs, idx }
     }
 
     /// 拆分收发半部（管道是全局静态，两半部可分属不同任务）
     pub fn split(self) -> (BufferedUartTx, BufferedUartRx) {
         (
-            BufferedUartTx { regs: self.regs, idx: self.idx },
+            BufferedUartTx {
+                regs: self.regs,
+                idx: self.idx,
+            },
             BufferedUartRx { idx: self.idx },
         )
     }
@@ -550,7 +622,12 @@ impl embedded_io_async::Write for BufferedUart {
         Ok(buf.len())
     }
     async fn flush(&mut self) -> Result<(), Self::Error> {
-        BufferedUartTx { regs: self.regs, idx: self.idx }.flush().await;
+        BufferedUartTx {
+            regs: self.regs,
+            idx: self.idx,
+        }
+        .flush()
+        .await;
         Ok(())
     }
 }
@@ -588,7 +665,7 @@ impl embedded_io_async::Read for BufferedUartRx {
 
 /// 缓冲模式 IRQ：RX 排空入管道 / TX 排空管道入 TDR / TC 唤醒 flush。
 /// 临界区内调用（kick 与本函数共用一套状态）。
-fn buffered_irq(idx: usize, regs: &'static pac::Uart) {
+fn buffered_irq(idx: usize, regs: &'static crate::Uart) {
     // RX：排空 RDR（读 RDR 清 RC；错误位经 ICR R1W0 清）
     loop {
         let isr = regs.isr.read();
@@ -597,13 +674,13 @@ fn buffered_irq(idx: usize, regs: &'static pac::Uart) {
             let one = [b];
             if RX_PIPE[idx].try_write(&one).is_err() {
                 {
-                // v6m 无 fetch_add（无 CAS）；本函数全程临界区，load+store 安全
-                let d = RX_DROPPED[idx].load(core::sync::atomic::Ordering::Relaxed);
-                RX_DROPPED[idx].store(d + 1, core::sync::atomic::Ordering::Relaxed);
-            }
+                    // v6m 无 fetch_add（无 CAS）；本函数全程临界区，load+store 安全
+                    let d = RX_DROPPED[idx].load(core::sync::atomic::Ordering::Relaxed);
+                    RX_DROPPED[idx].store(d + 1, core::sync::atomic::Ordering::Relaxed);
+                }
             }
         } else {
-            if isr & (ub::ISR_ORE | ub::ISR_NE | ub::ISR_PE | ub::ISR_FE) != 0 {
+            if isr & (ub::ERR_ALL) != 0 {
                 regs.icr.write(ub::ICR_CLEAR_RX_ERRORS);
             }
             break;
@@ -621,11 +698,14 @@ fn buffered_irq(idx: usize, regs: &'static pac::Uart) {
 
 /// TX 排空：管道有货且 TXBE 时写 TDR（写前清 TC，防陈旧标志把
 /// flush 提前唤醒——纪律吸收自 cw32-hal2 的 transmit()）。
-fn buffered_tx_drain(idx: usize, regs: &'static pac::Uart) {
+fn buffered_tx_drain(idx: usize, regs: &'static crate::Uart) {
     let mut byte = [0u8; 1];
     while TX_ACTIVE[idx].load(core::sync::atomic::Ordering::Relaxed)
         && regs.isr.read() & ub::ISR_TXBE != 0
-        && TX_PIPE[idx].try_read(&mut byte).map(|n| n > 0).unwrap_or(false)
+        && TX_PIPE[idx]
+            .try_read(&mut byte)
+            .map(|n| n > 0)
+            .unwrap_or(false)
     {
         regs.icr.write(ub::ICR_NONE & !ub::ISR_TC); // R1W0：清 TC
         regs.tdr.write(byte[0] as u32);
@@ -640,19 +720,19 @@ fn buffered_tx_drain(idx: usize, regs: &'static pac::Uart) {
 // ================= 中断派发 =================
 
 /// 单实例中断处理：缓冲模式走管道排空，逐字节模式唤醒等待者。
-fn on_irq(idx: usize, regs: &'static pac::Uart) {
+fn on_irq(idx: usize, regs: &'static crate::Uart) {
     if BUFFERED[idx].load(core::sync::atomic::Ordering::Relaxed) {
         critical_section::with(|_| buffered_irq(idx, regs));
         return;
     }
     let isr = regs.isr.read();
-    if isr & (ub::ISR_RC | ub::ISR_ORE | ub::ISR_NE | ub::ISR_PE | ub::ISR_FE) != 0 {
+    if isr & (ub::RX_ALL) != 0 {
         RX_WAKER[idx].wake();
     }
     if isr & (ub::ISR_TXBE | ub::ISR_TC) != 0 {
         TX_WAKER[idx].wake();
     }
-    if isr & (ub::ISR_ORE | ub::ISR_NE | ub::ISR_PE | ub::ISR_FE) != 0 {
+    if isr & (ub::ERR_ALL) != 0 {
         regs.icr.write(ub::ICR_CLEAR_RX_ERRORS);
     }
     // 无等待者时压掉中断使能，避免风暴（下次 poll 会重新打开）
@@ -668,7 +748,7 @@ fn on_irq(idx: usize, regs: &'static pac::Uart) {
 pub struct Uart1Irq;
 impl IrqHandler<interrupt::UART1> for Uart1Irq {
     fn call() {
-        on_irq(0, unsafe { &*(pac::UART1_BASE as *const pac::Uart) });
+        on_irq(0, unsafe { &*(pac::UART1_BASE as *const crate::Uart) });
     }
 }
 
@@ -676,7 +756,7 @@ impl IrqHandler<interrupt::UART1> for Uart1Irq {
 pub struct Uart2Irq;
 impl IrqHandler<interrupt::UART2> for Uart2Irq {
     fn call() {
-        on_irq(1, unsafe { &*(pac::UART2_BASE as *const pac::Uart) });
+        on_irq(1, unsafe { &*(pac::UART2_BASE as *const crate::Uart) });
     }
 }
 
@@ -684,6 +764,6 @@ impl IrqHandler<interrupt::UART2> for Uart2Irq {
 pub struct Uart3Irq;
 impl IrqHandler<interrupt::UART3> for Uart3Irq {
     fn call() {
-        on_irq(2, unsafe { &*(pac::UART3_BASE as *const pac::Uart) });
+        on_irq(2, unsafe { &*(pac::UART3_BASE as *const crate::Uart) });
     }
 }
