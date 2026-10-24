@@ -63,6 +63,8 @@ compile_error!("必须启用一个家族 feature:cw32l012 或 cw32f030");
 pub mod gpio;
 pub mod i2c;
 pub mod interrupt;
+#[cfg(feature = "cw32f030")]
+pub mod rcc;
 pub mod spi;
 pub mod time_driver;
 pub mod uart;
@@ -143,6 +145,13 @@ pub fn init(config: Config) {
     HCLK_HZ.store(config.hclk_hz, Ordering::Relaxed);
     PCLK_HZ.store(config.pclk_hz, Ordering::Relaxed);
     time_driver::init();
+}
+
+/// 切频后更新全局频率声明(配 [] 使用;否则 Timer/波特率全部错拍)
+#[cfg(feature = "cw32f030")]
+pub fn set_frequencies(hclk_hz: u32, pclk_hz: u32) {
+    HCLK_HZ.store(hclk_hz, Ordering::Relaxed);
+    PCLK_HZ.store(pclk_hz, Ordering::Relaxed);
 }
 
 // ================= critical-section 实现 =================
