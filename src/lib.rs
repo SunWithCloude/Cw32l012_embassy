@@ -60,6 +60,8 @@ compile_error!("cw32l012 与 cw32f030 feature 互斥,一个固件只选一个家
 #[cfg(not(any(feature = "cw32l012", feature = "cw32f030")))]
 compile_error!("必须启用一个家族 feature:cw32l012 或 cw32f030");
 
+#[cfg(feature = "cw32l012")]
+pub mod adc;
 pub mod gpio;
 pub mod i2c;
 pub mod interrupt;
@@ -97,6 +99,8 @@ pub type Uart = pac::Uart;
 pub type Spi = pac::Spi;
 #[cfg(feature = "cw32l012")]
 pub type I2c = pac::I2c;
+#[cfg(feature = "cw32l012")]
+pub type Adc = pac::Adc;
 #[cfg(feature = "cw32f030")]
 pub type Gpio = pac::GPIO;
 #[cfg(feature = "cw32f030")]

@@ -234,6 +234,16 @@ impl<P: GpioPort> Pin<P> {
     pub fn set_af(&self, af: u8) {
         self.port.set_af(self.pin, af);
     }
+
+    /// 配置为**模拟引脚**（`GPIOx_ANALOG.PINy=1`），供 ADC/DAC/比较器
+    /// 等模拟外设使用（手册 §25 转换通道要求）。[`Pin::new`] 及
+    /// `Output`/`Input` 构造会清掉 ANALOG 位（数字模式），模拟用途
+    /// 必须在把引脚交给外设前显式调用本方法。
+    pub fn into_analog(self) -> Self {
+        let m = self.mask();
+        self.port.mod_(Reg::Analog, |v| v | m); // 1 = 模拟
+        self
+    }
 }
 
 /// 上/下拉配置。

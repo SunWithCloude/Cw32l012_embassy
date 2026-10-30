@@ -77,3 +77,7 @@ required-features = ["rt", "cw32f030"]
 [[example]]
 name = "i2c_scan_f030"
 required-features = ["rt", "cw32f030"]
+
+[[example]]
+name = "adc_async"
+required-features = ["rt", "cw32l012"]
