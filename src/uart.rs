@@ -101,7 +101,9 @@ pub(crate) mod ub {
     }
 }
 
-#[cfg(feature = "cw32f030")]
+// 经典组(F030/L031/L052/R031/W031 逐个接入;位面逐 PAC 核对一致:
+// ISR TXE0/TC1/RC2/FE3/PE4,无 NE/ORE;ICR 为 R1W0,已定义位至 bit11)
+#[cfg(any(feature = "cw32f030", feature = "cw32l031"))]
 pub(crate) mod ub {
     use crate::pac::uart as raw;
     /// 发送缓冲空(ISR/IER bit0)
@@ -244,8 +246,13 @@ impl Uart {
         Self::new_inner(regs, tx, rx, af, config)
     }
 
-    /// 初始化 UART1（L010/L011 单实例家族的入口）。
-    #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+    /// 初始化 UART1（L010/L011 与经典代单 UART 家族的入口；这些家族
+    /// PAC 只有 UART1_BASE，UART2/3 仅有中断号无硬件）。
+    #[cfg(any(
+        feature = "cw32l010",
+        feature = "cw32l011",
+        feature = "cw32l031"
+    ))]
     pub fn new(
         regs: &'static crate::Uart,
         tx: Pin<impl GpioPort>,
@@ -321,6 +328,12 @@ impl Uart {
             // uart1en = APBEN1.3(L012 代组布局,带 KEY 写保护)
             sysctrl.apben1.write(crate::SYSCTRL_KEY | (1 << 3));
         }
+        // 经典代单 UART 家族(l031 等):uart1en = APBEN2.9,无 KEY,读改写
+        #[cfg(feature = "cw32l031")]
+        {
+            assert!(idx == 0, "该家族仅 UART1 实例");
+            sysctrl.apben2.modify(|v| v | (1 << 9));
+        }
         #[cfg(feature = "cw32f030")]
         {
             // F030 APBEN 无 KEY 保护,用读改写防顶掉其它使能位
@@ -348,7 +361,11 @@ impl Uart {
 
         // v0.1 遗漏修复：使能 NVIC 中断线（向量有了但 ISER 没开，
         // 任何 UART 中断都进不来——2026-10-24 移植缓冲驱动时发现）
-        #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+        #[cfg(any(
+            feature = "cw32l010",
+            feature = "cw32l011",
+            feature = "cw32l031"
+        ))]
         crate::interrupt::nvic_enable::<interrupt::UART1>();
         #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
         match idx {

@@ -445,9 +445,10 @@ pub use l012::*;
 /// （注释中的 `c:NN` 即该文件行号）。
 // L010 的 I2C 与 F030 同构(cr/stat/dr/addr0-2/brr,8051 状态机,CR 位面
 // flt/aa/si/sto/sta/en 完全一致,l010 多 sclinsrc/sdainsrc 两个输入源位
-// 不参与主机流程)——复用本分支。⚠ 状态码语义级验证待 L010 板,编译级
-// 依据为两侧生成 PAC 的位面比对(2026-10-31)。
-#[cfg(any(feature = "cw32f030", feature = "cw32l010"))]
+// 不参与主机流程)——复用本分支。经典代小家族(L031/L052/R031/W031)逐
+// PAC 核对位面与 F030 完全一致,同款接入。⚠ 状态码语义级验证待实板,
+// 编译级依据为各侧生成 PAC 的位面比对(2026-10-31)。
+#[cfg(any(feature = "cw32f030", feature = "cw32l010", feature = "cw32l031"))]
 mod f030 {
     use core::future::poll_fn;
     use core::task::Poll;
@@ -617,8 +618,12 @@ mod f030 {
             Self::new_inner(regs, scl, sda, af, config)
         }
 
-        /// 初始化 I2C(L010 单实例家族入口)。
-        #[cfg(feature = "cw32l010")]
+        /// 初始化 I2C(单实例家族入口:l010 与经典代小家族——PAC 只有
+        /// I2C1 硬件,I2C2 仅有中断号)。
+        #[cfg(any(
+            feature = "cw32l010",
+            feature = "cw32l031"
+        ))]
         pub fn new(
             regs: &'static pac::I2C,
             scl: Pin<impl GpioPort>,
@@ -673,6 +678,12 @@ mod f030 {
                 // i2c1en = APBEN1.6(L012 代组布局,带 KEY 写保护)
                 sysctrl.apben1.write(crate::SYSCTRL_KEY | (1 << 6));
             }
+            // 经典代单 I2C 家族(l031 等):i2c1en = APBEN1.11,无 KEY,读改写
+            #[cfg(feature = "cw32l031")]
+            {
+                assert!(idx == 0, "该家族仅 I2C1 实例");
+                sysctrl.apben1.modify(|v| v | (1 << 11));
+            }
             #[cfg(feature = "cw32f030")]
             match idx {
                 0 => sysctrl.apben1.modify(|v| v | (1 << 11)),
@@ -714,7 +725,7 @@ mod f030 {
             // 使能 NVIC 中断线（IRQ23/24，两代 typelevel 同名同号）。中断仅由
             // CR.SI 门控——寄存器块无 IER（厂商库 I2C_GetIrq 即读 CR bit3，
             // c:282-286），SI=0 期间线静默，派发侧再压线防风暴。
-            #[cfg(feature = "cw32l010")]
+            #[cfg(any(feature = "cw32l010", feature = "cw32l031"))]
             crate::interrupt::nvic_enable::<interrupt::I2C1>();
             #[cfg(feature = "cw32f030")]
             match idx {
@@ -752,7 +763,7 @@ mod f030 {
                 } else {
                     // 开 NVIC 线（IRQ 派发侧会再压掉，防无等待者风暴；
                     // 线关断期间 SI 置位会被 NVIC 挂起，重开即触发——不丢唤醒）
-                    #[cfg(feature = "cw32l010")]
+                    #[cfg(any(feature = "cw32l010", feature = "cw32l031"))]
                     crate::interrupt::nvic_enable::<interrupt::I2C1>();
                     #[cfg(feature = "cw32f030")]
                     match self.idx {
@@ -1064,7 +1075,7 @@ mod f030 {
     fn on_irq(idx: usize, regs: &'static pac::I2C) {
         let _ = regs.stat.read();
         WAKER[idx].wake();
-        #[cfg(feature = "cw32l010")]
+        #[cfg(any(feature = "cw32l010", feature = "cw32l031"))]
         nvic_disable::<interrupt::I2C1>();
         #[cfg(feature = "cw32f030")]
         match idx {
@@ -1092,5 +1103,5 @@ mod f030 {
     }
 }
 
-#[cfg(any(feature = "cw32f030", feature = "cw32l010"))]
+#[cfg(any(feature = "cw32f030", feature = "cw32l010", feature = "cw32l031"))]
 pub use f030::*;

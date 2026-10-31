@@ -118,8 +118,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "cw32l010-pac"
+version = "0.1.0"
+dependencies = [
+ "cortex-m-rt",
+]
+
+[[package]]
+name = "cw32l011-pac"
+version = "0.1.0"
+dependencies = [
+ "cortex-m-rt",
+]
+
+[[package]]
 name = "cw32l012-pac"
 version = "0.2.1"
+dependencies = [
+ "cortex-m-rt",
+]
+
+[[package]]
+name = "cw32l031-pac"
+version = "0.1.0"
 dependencies = [
  "cortex-m-rt",
 ]
@@ -175,7 +196,10 @@ dependencies = [
  "cortex-m-rt",
  "critical-section",
  "cw32f030-pac",
+ "cw32l010-pac",
+ "cw32l011-pac",
  "cw32l012-pac",
+ "cw32l031-pac",
  "embassy-executor",
  "embassy-futures",
  "embassy-sync",
