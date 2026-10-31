@@ -25,11 +25,12 @@ use crate::pac;
 
 // ================= 家族位常量面 =================
 // 全家族共用位:TXBE=0 / TC=1 / RC=2。错误位两代不同:
-// L012 代组(L010/L011/L012) FE8/PE9/NE10/ORE11;经典组 FE3/PE4 且无 NE/ORE。
-// ICR 两代均为 R1W0(写 0 清除):L012 依据 UM V1.4;F030 依据厂商库
+// L012 代组(L010/L011/L012) FE8/PE9/NE10/ORE11;经典组(F030/F020/F003)
+// FE3/PE4 且无 NE/ORE(逐 PAC 抽验:F020/F003 的 isr::fe_POS=3/pe_POS=4 同
+// f030)。ICR 两代均为 R1W0(写 0 清除):L012 依据 UM V1.4;经典组依据厂商库
 // cw32f030_uart.c 的 REGBITS_CLR(ICR, flag)。
-// L012 用手写 PAC 的 ISR_* 常量名;L010/L011 生成 PAC 是小写字段 _MASK
-// 风格,在此适配成统一名(寄存器布局与 L012 手册同源)。
+// L012 用手写 PAC 的 ISR_* 常量名;生成 PAC 是小写字段 _MASK 风格,
+// 在此适配成统一名(寄存器布局与各家族手册同源)。
 #[cfg(feature = "cw32l012")]
 pub(crate) mod ub {
     pub use crate::pac::uart::*;
@@ -101,9 +102,9 @@ pub(crate) mod ub {
     }
 }
 
-// 经典组(F030/L031/L052/R031/W031 逐个接入;位面逐 PAC 核对一致:
+// 经典组(F030/F020/F003/L031/L052/R031/W031 逐个接入;位面逐 PAC 核对一致:
 // ISR TXE0/TC1/RC2/FE3/PE4,无 NE/ORE;ICR 为 R1W0,已定义位至 bit11)
-#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031", feature = "cw32f020", feature = "cw32f003"))]
 pub(crate) mod ub {
     use crate::pac::uart as raw;
     /// 发送缓冲空(ISR/IER bit0)
@@ -188,6 +189,8 @@ impl embedded_io::Error for UartError {
 
 /// 实例索引（0/1/2 = UART1/2/3）
 fn instance_of(regs: &'static crate::Uart) -> usize {
+    // L012/F030 三实例;L010/L011/F003/F020 单实例(PAC 无 UART2/3 基址
+    // 常量——F003 硬件有 UART2@0x40004400 但生成 PAC 缺实例,仅接 UART1)
     match regs as *const _ as usize {
         pac::UART1_BASE => 0,
         #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
@@ -246,15 +249,18 @@ impl Uart {
         Self::new_inner(regs, tx, rx, af, config)
     }
 
-    /// 初始化 UART1（L010/L011 与经典代单 UART 家族的入口；这些家族
-    /// PAC 只有 UART1_BASE，UART2/3 仅有中断号无硬件）。
+    /// 初始化 UART1（单实例家族与经典代 l031 组的入口；L010/L011/
+    /// L031 组/F003/F020 的 PAC 只有 UART1_BASE，UART2/3 仅有中断号
+    /// 无硬件——F003 的 UART2 硅片存在但生成 PAC 缺实例，待 PAC 补）。
     #[cfg(any(
         feature = "cw32l010",
         feature = "cw32l011",
         feature = "cw32l031",
         feature = "cw32l052",
         feature = "cw32r031",
-        feature = "cw32w031"
+        feature = "cw32w031",
+        feature = "cw32f020",
+        feature = "cw32f003"
     ))]
     pub fn new(
         regs: &'static crate::Uart,
@@ -313,8 +319,10 @@ impl Uart {
         config: Config,
     ) -> Self {
         let idx = instance_of(regs);
-        // 使能 UART 时钟（KEY 保护写）;两代门控位不同:
-        // L012 全在 APBEN1(bit3/4/8);F030:UART1=APBEN2.9、UART2=APBEN1.7、UART3=APBEN1.8
+        // 使能 UART 时钟;两代门控位不同:
+        // L012 全在 APBEN1(bit3/4/8,带 KEY);经典组:UART1=APBEN2.9、
+        // UART2=APBEN1.7、UART3=APBEN1.8(F030 实测布局;F020/F003 的
+        // PAC apben2::uart1/apben1::uart2 同位抽验一致),无 KEY 读改写
         let sysctrl = unsafe { &*(pac::SYSCTRL_BASE as *const crate::Sysctrl) };
         #[cfg(feature = "cw32l012")]
         {
@@ -337,14 +345,12 @@ impl Uart {
             assert!(idx == 0, "该家族仅 UART1 实例");
             sysctrl.apben2.modify(|v| v | (1 << 9));
         }
-        #[cfg(feature = "cw32f030")]
+        #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32f003"))]
         {
-            // F030 APBEN 无 KEY 保护,用读改写防顶掉其它使能位
-            match idx {
-                0 => sysctrl.apben2.modify(|v| v | (1 << 9)),
-                1 => sysctrl.apben1.modify(|v| v | (1 << 7)),
-                _ => sysctrl.apben1.modify(|v| v | (1 << 8)),
-            }
+            // F020/F003 单实例(PAC 无 UART2/3 基址常量);APBEN 无 KEY
+            // 保护,用读改写防顶掉其它使能位
+            assert!(idx == 0, "F020/F003 仅 UART1 实例(PAC 无 UART2/3)");
+            sysctrl.apben2.modify(|v| v | (1 << 9));
         }
 
         // 引脚复用（数字模式、方向交给外设）
@@ -370,7 +376,9 @@ impl Uart {
             feature = "cw32l031",
             feature = "cw32l052",
             feature = "cw32r031",
-            feature = "cw32w031"
+            feature = "cw32w031",
+            feature = "cw32f020",
+            feature = "cw32f003"
         ))]
         crate::interrupt::nvic_enable::<interrupt::UART1>();
         #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]

@@ -23,7 +23,7 @@
 //!
 //! #[main]
 //! async fn main() -> () {
-//!     embassy_cw32::init(Config::default()); // 复位默认 SysClk = 4MHz
+//!     embassy_cw32::init(Config::default()); // 复位默认 SysClk:L012 代组 4MHz / 经典代 8MHz
 //!     let p = Peripherals::take().unwrap();
 //!     embassy_cw32::sysctrl_enable_gpioa(p.sysctrl); // 打开 GPIOA 时钟
 //!     let mut led = Output::new(Pin::new(p.gpioa, 13), Level::High);
@@ -37,8 +37,9 @@
 //! ## 时钟约定
 //!
 //! v0.1 不做时钟树配置：`Config` 只是**声明**当前 SysClk / PCLK 频率
-//! （复位默认均为 4MHz），用于 SysTick 计时与波特率换算。需要变频的
-//! 固件请先用寄存器层配好时钟再 `init`，并传入对应频率。
+//! （复位默认：L012 代组 4MHz，经典代组 F030/F020/F003 8MHz），用于
+//! SysTick 计时与波特率换算。需要变频的固件请先用寄存器层配好时钟再
+//! `init`，并传入对应频率。
 //!
 //! ## 中断绑定
 //!
@@ -67,7 +68,7 @@ macro_rules! fam_exclusive {
         fam_exclusive!($($rest),*);
     };
 }
-fam_exclusive!("cw32l012", "cw32l010", "cw32l011", "cw32f030", "cw32l031", "cw32l052", "cw32r031", "cw32w031");
+fam_exclusive!("cw32l012", "cw32l010", "cw32l011", "cw32f030", "cw32l031", "cw32l052", "cw32r031", "cw32w031", "cw32f020", "cw32f003");
 #[cfg(not(any(
     feature = "cw32l012",
     feature = "cw32l010",
@@ -76,14 +77,17 @@ fam_exclusive!("cw32l012", "cw32l010", "cw32l011", "cw32f030", "cw32l031", "cw32
     feature = "cw32l031",
     feature = "cw32l052",
     feature = "cw32r031",
-    feature = "cw32w031"
+    feature = "cw32w031",
+    feature = "cw32f020",
+    feature = "cw32f003"
 )))]
-compile_error!("必须启用一个家族 feature:cw32l012 / cw32l010 / cw32l011 / cw32f030 / cw32l031 / cw32l052 / cw32r031 / cw32w031");
+compile_error!("必须启用一个家族 feature:cw32l012 / cw32l010 / cw32l011 / cw32f030 / cw32l031 / cw32l052 / cw32r031 / cw32w031 / cw32f020 / cw32f003");
 
 #[cfg(feature = "cw32l012")]
 pub mod adc;
 pub mod gpio;
-// I2C 覆盖 L012/F030/L010(L010 与 F030 同构,编译级接入;L011 无 I2C 硬件)
+// I2C 覆盖 L012/F030/F020/F003/L010(经典组同构 8051 状态机外设,编译级
+// 接入;L011 无 I2C 硬件)
 #[cfg(not(feature = "cw32l011"))]
 pub mod i2c;
 pub mod interrupt;
@@ -97,6 +101,10 @@ pub mod uart;
 
 #[cfg(feature = "cw32f030")]
 pub use cw32f030_pac as pac;
+#[cfg(feature = "cw32f020")]
+pub use cw32f020_pac as pac;
+#[cfg(feature = "cw32f003")]
+pub use cw32f003_pac as pac;
 #[cfg(feature = "cw32l012")]
 pub use cw32l012_pac as pac;
 #[cfg(feature = "cw32l010")]
@@ -158,6 +166,19 @@ pub type Uart = pac::UART;
 pub type Spi = pac::SPI;
 #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
 pub type I2c = pac::I2C;
+// 生成家族(经典代 F020/F003):类型名同头文件原名(全大写)。
+// F020 单 UART1/SPI1/I2C1;F003 单 UART1/SPI/I2C(PAC 无 UART2 实例,
+// 尽管硬件有 UART2@0x40004400——生成缺口,见仓库汇报)
+#[cfg(any(feature = "cw32f020", feature = "cw32f003"))]
+pub type Gpio = pac::GPIO;
+#[cfg(any(feature = "cw32f020", feature = "cw32f003"))]
+pub type Sysctrl = pac::SYSCTRL;
+#[cfg(any(feature = "cw32f020", feature = "cw32f003"))]
+pub type Uart = pac::UART;
+#[cfg(any(feature = "cw32f020", feature = "cw32f003"))]
+pub type Spi = pac::SPI;
+#[cfg(any(feature = "cw32f020", feature = "cw32f003"))]
+pub type I2c = pac::I2C;
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -178,14 +199,12 @@ impl Default for Config {
     fn default() -> Self {
         // 复位默认时钟:L012 代组(L010/L011/L012) = HSI 96MHz/24 = 4MHz
         // (L010/L011 的 HSIOSC 48/96MHz,复位默认分频档同为 nominal 4MHz);
-        // 经典组(F030/L031/L052/R031/W031) = HSI 48MHz/6 = 8MHz——L031
-        // 数据手册 Rev1.8 p14:"MCU 复位后,默认选择 HSI(由内部 48MHz
-        // HSIOSC 振荡器分频产生)作为 SysClk 的时钟源,系统时钟频率默认值
-        // 是 8MHz"(⚠ 任务基线曾按 4MHz 归组,以手册原文为准;F030 上板
-        // 实测同款 8MHz 假设)
+        // 经典组(F030/F020/F003/L031/L052/R031/W031) = HSI 48MHz/6 = 8MHz
+        // ——手册原文:L031 数据手册 Rev1.8 p14、F020 用户手册 V1.4 p48、
+        // F003 数据手册均写明复位默认 8MHz(F030 上板实测同款)
         #[cfg(any(feature = "cw32l012", feature = "cw32l010", feature = "cw32l011"))]
         let hz = 4_000_000;
-        #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
+        #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031", feature = "cw32f020", feature = "cw32f003"))]
         let hz = 8_000_000;
         Config {
             hclk_hz: hz,
@@ -281,8 +300,9 @@ mod cs_impl_host {
 /// SYSCTRL 写保护键。⚠ 仅 L012 代组(L010/L011/L012)需要:其 KEY 保护
 /// 寄存器须高 16 位 0x5A5A 才生效。**经典家族(F030/L031/L052/L083/R031/
 /// W031/F003/F020)的 AHBEN/APBEN 无 KEY 保护**(厂商库 `CW_SYSCTRL->APBEN2
-/// |= Periph` 直接写;F030 2026-10-24 上板实测带 KEY 写会顶掉使能位;L031/
-/// L052 的门控 sidecar 亦无 key 元数据),仅 IER/复位类寄存器带 KEY。
+/// |= Periph` 直接写;F030 2026-10-24 上板实测带 KEY 写会顶掉使能位;
+/// F003/F020 生成 PAC 的 ahben/apben1/apben2 位域亦无 KEY 元数据),
+/// 仅 IER/复位类寄存器带 KEY。
 #[cfg(any(feature = "cw32l012", feature = "cw32l010", feature = "cw32l011"))]
 pub const SYSCTRL_KEY: u32 = 0x5A5A << 16;
 
@@ -290,7 +310,7 @@ pub const SYSCTRL_KEY: u32 = 0x5A5A << 16;
 pub fn sysctrl_enable_gpioa(sysctrl: &'static crate::Sysctrl) {
     #[cfg(any(feature = "cw32l012", feature = "cw32l010", feature = "cw32l011"))]
     sysctrl.ahben.write(SYSCTRL_KEY | (1 << 4));
-    #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
+    #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031", feature = "cw32f020", feature = "cw32f003"))]
     sysctrl.ahben.modify(|v| v | (1 << 4));
 }
 
@@ -298,7 +318,7 @@ pub fn sysctrl_enable_gpioa(sysctrl: &'static crate::Sysctrl) {
 pub fn sysctrl_enable_gpiob(sysctrl: &'static crate::Sysctrl) {
     #[cfg(any(feature = "cw32l012", feature = "cw32l010", feature = "cw32l011"))]
     sysctrl.ahben.write(SYSCTRL_KEY | (1 << 5));
-    #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
+    #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031", feature = "cw32f020", feature = "cw32f003"))]
     sysctrl.ahben.modify(|v| v | (1 << 5));
 }
 

@@ -15,6 +15,11 @@
 //!   适合"写寄存器指针 + 读数据"类器件（EEPROM 随机读、传感器保持
 //!   寄存器等）；同向连续 Operation 直接续传不重发地址；读尾自动
 //!   AA=0 NACK 末字节；错误态发 STOP 复位总线。
+//! - **cw32f020 / cw32f003**（编译级接入，复用 f030 分支）：CR/BRREN/
+//!   STAT 位面与 F030 逐 PAC 比对一致（flt/aa/si/sto/sta/en 同位）。
+//!   单实例：F020 中断名/基址 I2C1/I2C1_BASE（同 f030）；F003 无数字
+//!   ——中断名 I2C（IRQ23）、基址 I2C_BASE。⚠ 语义级验证待板，
+//!   编译级依据为两侧生成 PAC 的位面比对（2026-10-31）。
 //!
 //! F030 补充说明：
 //!
@@ -443,12 +448,14 @@ pub use l012::*;
 /// F030 经典家族驱动。寄存器位面取自生成 PAC（`pac::i2c`，与厂商头
 /// `cw32f030_i2c.h` 一致），状态机时序逐条对照厂商库 `cw32f030_i2c.c`
 /// （注释中的 `c:NN` 即该文件行号）。
-// L010 的 I2C 与 F030 同构(cr/stat/dr/addr0-2/brr,8051 状态机,CR 位面
-// flt/aa/si/sto/sta/en 完全一致,l010 多 sclinsrc/sdainsrc 两个输入源位
-// 不参与主机流程)——复用本分支。经典代小家族(L031/L052/R031/W031)逐
-// PAC 核对位面与 F030 完全一致,同款接入。⚠ 状态码语义级验证待实板,
+// L010/F020/F003 的 I2C 与 F030 同构(cr/stat/dr/addr0-2/brr,8051 状态机,
+// CR 位面 flt/aa/si/sto/sta/en 完全一致,l010 多 sclinsrc/sdainsrc 两个输入
+// 源位不参与主机流程)——复用本分支。经典代小家族(L031/L052/R031/W031)
+// 逐 PAC 核对位面与 F030 完全一致,同款接入。⚠ 状态码语义级验证待实板,
 // 编译级依据为各侧生成 PAC 的位面比对(2026-10-31)。
-#[cfg(any(feature = "cw32f030", feature = "cw32l010", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
+// 实例/中断命名:F020/l010/l031 组=f030 同名(I2C1/I2C1_BASE);F003 无数字
+// (中断名 I2C、基址 I2C_BASE)。
+#[cfg(any(feature = "cw32f030", feature = "cw32l010", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031", feature = "cw32f020", feature = "cw32f003"))]
 mod f030 {
     use core::future::poll_fn;
     use core::task::Poll;
@@ -552,6 +559,15 @@ mod f030 {
 
     /// 实例索引（0/1 = I2C1/2；两代基地址相同）
     fn instance_of(regs: &'static pac::I2C) -> usize {
+        // f003 单实例且基址常量无数字(I2C_BASE);其余家族为 I2C1_BASE
+        #[cfg(feature = "cw32f003")]
+        {
+            if regs as *const _ as usize == pac::I2C_BASE {
+                return 0;
+            }
+            unreachable!("非 I2C 寄存器块");
+        }
+        #[cfg(not(feature = "cw32f003"))]
         match regs as *const _ as usize {
             pac::I2C1_BASE => 0,
             #[cfg(feature = "cw32f030")]
@@ -618,14 +634,15 @@ mod f030 {
             Self::new_inner(regs, scl, sda, af, config)
         }
 
-        /// 初始化 I2C(单实例家族入口:l010 与经典代小家族——PAC 只有
-        /// I2C1 硬件,I2C2 仅有中断号)。
+        /// 初始化 I2C(单实例家族入口:I2C1 中断名家族——PAC 只有
+        /// I2C1 硬件,I2C2 仅有中断号;F003 中断名 I2C,见下方独立入口)。
         #[cfg(any(
             feature = "cw32l010",
             feature = "cw32l031",
             feature = "cw32l052",
             feature = "cw32r031",
-            feature = "cw32w031"
+            feature = "cw32w031",
+            feature = "cw32f020"
         ))]
         pub fn new(
             regs: &'static pac::I2C,
@@ -638,7 +655,21 @@ mod f030 {
             Self::new_inner(regs, scl, sda, af, config)
         }
 
-        /// 初始化 I2C1（IRQ 绑定收窄到 I2C1）。
+        /// 初始化 I2C(F003 单实例家族入口;其中断名无数字——I2C,IRQ23)。
+        #[cfg(feature = "cw32f003")]
+        pub fn new(
+            regs: &'static pac::I2C,
+            scl: Pin<impl GpioPort>,
+            sda: Pin<impl GpioPort>,
+            af: u8,
+            _irqs: impl Binding<interrupt::I2C>,
+            config: Config,
+        ) -> Self {
+            Self::new_inner(regs, scl, sda, af, config)
+        }
+
+        /// 初始化 I2C1（IRQ 绑定收窄到 I2C1；F003 中断名无数字,不可用）。
+        #[cfg(any(feature = "cw32f030", feature = "cw32l010", feature = "cw32f020"))]
         pub fn new_i2c1(
             regs: &'static pac::I2C,
             scl: Pin<impl GpioPort>,
@@ -671,9 +702,10 @@ mod f030 {
             config: Config,
         ) -> Self {
             let idx = instance_of(regs);
-            // 时钟门控：F030 APBEN 无 KEY 保护，读改写防顶掉其它使能位
-            // （uart/spi.rs F030 分支同款）；I2C1=APBEN1.11、I2C2=APBEN1.12
-            // （PAC sysctrl::apben1::i2c1/i2c2 位域）
+            // 时钟门控:经典组 APBEN 无 KEY 保护,读改写防顶掉其它使能位
+            // （uart/spi.rs 经典组分支同款）;I2C1/I2C=APBEN1.11、I2C2=
+            // APBEN1.12(f030 有第二实例;f020/f003 单实例恒走 idx=0 分支,
+            // F020 PAC apben1::i2c1、F003 PAC apben1::i2c 同位抽验一致)
             let sysctrl = unsafe { &*(pac::SYSCTRL_BASE as *const crate::Sysctrl) };
             #[cfg(feature = "cw32l010")]
             {
@@ -687,7 +719,7 @@ mod f030 {
                 assert!(idx == 0, "该家族仅 I2C1 实例");
                 sysctrl.apben1.modify(|v| v | (1 << 11));
             }
-            #[cfg(feature = "cw32f030")]
+            #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32f003"))]
             match idx {
                 0 => sysctrl.apben1.modify(|v| v | (1 << 11)),
                 _ => sysctrl.apben1.modify(|v| v | (1 << 12)),
@@ -728,8 +760,10 @@ mod f030 {
             // 使能 NVIC 中断线（IRQ23/24，两代 typelevel 同名同号）。中断仅由
             // CR.SI 门控——寄存器块无 IER（厂商库 I2C_GetIrq 即读 CR bit3，
             // c:282-286），SI=0 期间线静默，派发侧再压线防风暴。
-            #[cfg(any(feature = "cw32l010", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
+            #[cfg(any(feature = "cw32l010", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031", feature = "cw32f020"))]
             crate::interrupt::nvic_enable::<interrupt::I2C1>();
+            #[cfg(feature = "cw32f003")]
+            crate::interrupt::nvic_enable::<interrupt::I2C>();
             #[cfg(feature = "cw32f030")]
             match idx {
                 0 => crate::interrupt::nvic_enable::<interrupt::I2C1>(),
@@ -766,8 +800,10 @@ mod f030 {
                 } else {
                     // 开 NVIC 线（IRQ 派发侧会再压掉，防无等待者风暴；
                     // 线关断期间 SI 置位会被 NVIC 挂起，重开即触发——不丢唤醒）
-                    #[cfg(any(feature = "cw32l010", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
+                    #[cfg(any(feature = "cw32l010", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031", feature = "cw32f020"))]
                     crate::interrupt::nvic_enable::<interrupt::I2C1>();
+                    #[cfg(feature = "cw32f003")]
+                    crate::interrupt::nvic_enable::<interrupt::I2C>();
                     #[cfg(feature = "cw32f030")]
                     match self.idx {
                         0 => crate::interrupt::nvic_enable::<interrupt::I2C1>(),
@@ -1078,8 +1114,10 @@ mod f030 {
     fn on_irq(idx: usize, regs: &'static pac::I2C) {
         let _ = regs.stat.read();
         WAKER[idx].wake();
-        #[cfg(any(feature = "cw32l010", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
+        #[cfg(any(feature = "cw32l010", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031", feature = "cw32f020"))]
         nvic_disable::<interrupt::I2C1>();
+        #[cfg(feature = "cw32f003")]
+        nvic_disable::<interrupt::I2C>();
         #[cfg(feature = "cw32f030")]
         match idx {
             0 => nvic_disable::<interrupt::I2C1>(),
@@ -1087,11 +1125,24 @@ mod f030 {
         }
     }
 
-    /// I2C1 中断标记（IRQ23）
+    /// I2C1 中断标记（IRQ23;f003 的中断向量名无数字——I2C,见下方别名 impl）
+    #[cfg(any(feature = "cw32f030", feature = "cw32l010", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
     pub struct I2c1Irq;
+    #[cfg(any(feature = "cw32f030", feature = "cw32l010", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
     impl IrqHandler<interrupt::I2C1> for I2c1Irq {
         fn call() {
             on_irq(0, unsafe { &*(pac::I2C1_BASE as *const pac::I2C) });
+        }
+    }
+
+    /// F003 的 I2C 中断标记（向量符号 `I2C`,IRQ23;复用 I2c1Irq 类型名,
+    /// bind_interrupts! 侧写作 `I2C => i2c::I2c1Irq;`）
+    #[cfg(feature = "cw32f003")]
+    pub struct I2c1Irq;
+    #[cfg(feature = "cw32f003")]
+    impl IrqHandler<interrupt::I2C> for I2c1Irq {
+        fn call() {
+            on_irq(0, unsafe { &*(pac::I2C_BASE as *const pac::I2C) });
         }
     }
 
@@ -1106,5 +1157,5 @@ mod f030 {
     }
 }
 
-#[cfg(any(feature = "cw32f030", feature = "cw32l010", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(feature = "cw32f030", feature = "cw32l010", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031", feature = "cw32f020", feature = "cw32f003"))]
 pub use f030::*;
