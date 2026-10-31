@@ -268,7 +268,7 @@ impl GpioPort for pac::GPIOF {
 /// 地址镜像:A=0x48000000、B=+0x400、C=+0x800、D=+0xC00、F=+0x1400;
 /// L031 系无 GPIOD 但槽位保留)。l052 的 GPIOD 未收编进槽位表
 /// (0..3 = A/B/C/F)。
-#[cfg(any(feature = "cw32l031", feature = "cw32l052"))]
+#[cfg(any(feature = "cw32l031", feature = "cw32l052", feature = "cw32r031"))]
 impl GpioPort for pac::GPIO {
     impl_port!(
         pac::GPIO,
@@ -567,7 +567,8 @@ impl<P: GpioPort> Input<P> {
                 feature = "cw32l011",
                 feature = "cw32l012",
                 feature = "cw32f030",
-                feature = "cw32l031"
+                feature = "cw32l031",
+                feature = "cw32r031"
             ))]
             2 => crate::interrupt::nvic_enable::<interrupt::GPIOC>(),
             // l052 的 GPIOC 挂在与 GPIOD 共享的向量上(IRQ7,GPIOC_GPIOD)
@@ -577,7 +578,8 @@ impl<P: GpioPort> Input<P> {
                 feature = "cw32l012",
                 feature = "cw32f030",
                 feature = "cw32l031",
-                feature = "cw32l052"
+                feature = "cw32l052",
+                feature = "cw32r031"
             ))]
             _ => crate::interrupt::nvic_enable::<interrupt::GPIOF>(),
             #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
@@ -707,4 +709,14 @@ port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOA_BASE + 0x400, 1);
 #[cfg(feature = "cw32l052")]
 port_irq!(GPIOC_GPIOD, GpioCIrq, pac::GPIO, pac::GPIOA_BASE + 0x800, 2);
 #[cfg(feature = "cw32l052")]
+port_irq!(GPIOF, GpioFIrq, pac::GPIO, pac::GPIOA_BASE + 0x1400, 3);
+
+// r031/w031 与 l031 同 PAC(仅 crate 名不同),端口中断面一致
+#[cfg(feature = "cw32r031")]
+port_irq!(GPIOA, GpioAIrq, pac::GPIO, pac::GPIOA_BASE, 0);
+#[cfg(feature = "cw32r031")]
+port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOA_BASE + 0x400, 1);
+#[cfg(feature = "cw32r031")]
+port_irq!(GPIOC, GpioCIrq, pac::GPIO, pac::GPIOA_BASE + 0x800, 2);
+#[cfg(feature = "cw32r031")]
 port_irq!(GPIOF, GpioFIrq, pac::GPIO, pac::GPIOA_BASE + 0x1400, 3);
