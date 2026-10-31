@@ -261,6 +261,34 @@ impl GpioPort for pac::GPIOF {
     }
 }
 
+/// 经典代小家族(L031/R031/W031/L052 逐个接入):单一 GPIO 类型覆盖全部
+/// 端口,**有 PDR** 下拉寄存器(与 F030 同面,用 impl_port! 宏)。端口基址
+/// 步进 0x400,但 GPIOF 在第 5 槽位 GPIOA_BASE+0x1400(经典代地址图
+/// GPIOD 占第 4 槽——CW32L031 数据手册 Rev1.8 图6-1/CW32L052 Rev1.1
+/// 地址镜像:A=0x48000000、B=+0x400、C=+0x800、D=+0xC00、F=+0x1400;
+/// L031 系无 GPIOD 但槽位保留)。l052 的 GPIOD 未收编进槽位表
+/// (0..3 = A/B/C/F)。
+#[cfg(any(feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
+impl GpioPort for pac::GPIO {
+    impl_port!(
+        pac::GPIO,
+        |s: &Self| match s as *const _ as usize {
+            pac::GPIOA_BASE => 0,
+            a if a == pac::GPIOA_BASE + 0x400 => 1,
+            a if a == pac::GPIOA_BASE + 0x800 => 2,
+            a if a == pac::GPIOA_BASE + 0x1400 => 3,
+            _ => unreachable!("GPIO 基地址不在 A/B/C/F"),
+        },
+        isr,
+        icr,
+        idr,
+        brr
+    );
+    fn set_af(&self, pin: u8, af: u8) {
+        set_af_impl(Some(&self.afrl), Some(&self.afrh), pin, af)
+    }
+}
+
 /// AFRL/AFRH 公共写入（缺失的段传 `None`——对应脚位范围不存在，
 /// 例如 F030 的 GPIOC 无低脚、GPIOF 无高脚）
 fn set_af_impl(
@@ -529,14 +557,32 @@ impl<P: GpioPort> Input<P> {
         let port = self.pin.port;
         let bank = port.bank();
         // 使能 NVIC 中断线（按槽位;端口存在性随家族不同:
-        // GPIOC 仅 L011/L012/F030,GPIOF 仅 L012/F030——L010/L011
+        // GPIOC 仅 L011/L012/F030/经典代小家族——l052 的向量符号为
+        // GPIOC_GPIOD;GPIOF 仅 L012/F030/经典代小家族——L010/L011
         // 的槽位 2/3 无对应中断,never 分支防误用）
         match bank {
             0 => crate::interrupt::nvic_enable::<interrupt::GPIOA>(),
             1 => crate::interrupt::nvic_enable::<interrupt::GPIOB>(),
-            #[cfg(any(feature = "cw32l011", feature = "cw32l012", feature = "cw32f030"))]
+            #[cfg(any(
+                feature = "cw32l011",
+                feature = "cw32l012",
+                feature = "cw32f030",
+                feature = "cw32l031",
+                feature = "cw32r031",
+                feature = "cw32w031"
+            ))]
             2 => crate::interrupt::nvic_enable::<interrupt::GPIOC>(),
-            #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
+            // l052 的 GPIOC 挂在与 GPIOD 共享的向量上(IRQ7,GPIOC_GPIOD)
+            #[cfg(feature = "cw32l052")]
+            2 => crate::interrupt::nvic_enable::<interrupt::GPIOC_GPIOD>(),
+            #[cfg(any(
+                feature = "cw32l012",
+                feature = "cw32f030",
+                feature = "cw32l031",
+                feature = "cw32l052",
+                feature = "cw32r031",
+                feature = "cw32w031"
+            ))]
             _ => crate::interrupt::nvic_enable::<interrupt::GPIOF>(),
             #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
             _ => unreachable!("该家族无此端口"),
@@ -644,3 +690,44 @@ port_irq!(GPIOA, GpioAIrq, pac::GPIO, pac::GPIOA_BASE, 0);
 port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOA_BASE + 0x400, 1);
 #[cfg(feature = "cw32l011")]
 port_irq!(GPIOC, GpioCIrq, pac::GPIO, pac::GPIOA_BASE + 0x800, 2);
+
+// 经典代小家族:单一 GPIO 类型,四个端口中断齐全(l052 例外:GPIOC 与
+// GPIOD 共享 IRQ7,向量符号 GPIOC_GPIOD);GPIOF 基址在 +0x1400 槽位
+#[cfg(feature = "cw32l031")]
+port_irq!(GPIOA, GpioAIrq, pac::GPIO, pac::GPIOA_BASE, 0);
+#[cfg(feature = "cw32l031")]
+port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOA_BASE + 0x400, 1);
+#[cfg(feature = "cw32l031")]
+port_irq!(GPIOC, GpioCIrq, pac::GPIO, pac::GPIOA_BASE + 0x800, 2);
+#[cfg(feature = "cw32l031")]
+port_irq!(GPIOF, GpioFIrq, pac::GPIO, pac::GPIOA_BASE + 0x1400, 3);
+
+// l052:GPIOC 与 GPIOD 共享 IRQ7,PAC 向量符号 GPIOC_GPIOD;GPIOC 端口
+// 本体存在(gate=AHBEN.6、基址 0x48000800),GPIOD 未收编
+#[cfg(feature = "cw32l052")]
+port_irq!(GPIOA, GpioAIrq, pac::GPIO, pac::GPIOA_BASE, 0);
+#[cfg(feature = "cw32l052")]
+port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOA_BASE + 0x400, 1);
+#[cfg(feature = "cw32l052")]
+port_irq!(GPIOC_GPIOD, GpioCIrq, pac::GPIO, pac::GPIOA_BASE + 0x800, 2);
+#[cfg(feature = "cw32l052")]
+port_irq!(GPIOF, GpioFIrq, pac::GPIO, pac::GPIOA_BASE + 0x1400, 3);
+
+// r031/w031 与 l031 同 PAC(仅 crate 名不同),端口中断面一致
+#[cfg(feature = "cw32r031")]
+port_irq!(GPIOA, GpioAIrq, pac::GPIO, pac::GPIOA_BASE, 0);
+#[cfg(feature = "cw32r031")]
+port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOA_BASE + 0x400, 1);
+#[cfg(feature = "cw32r031")]
+port_irq!(GPIOC, GpioCIrq, pac::GPIO, pac::GPIOA_BASE + 0x800, 2);
+#[cfg(feature = "cw32r031")]
+port_irq!(GPIOF, GpioFIrq, pac::GPIO, pac::GPIOA_BASE + 0x1400, 3);
+
+#[cfg(feature = "cw32w031")]
+port_irq!(GPIOA, GpioAIrq, pac::GPIO, pac::GPIOA_BASE, 0);
+#[cfg(feature = "cw32w031")]
+port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOA_BASE + 0x400, 1);
+#[cfg(feature = "cw32w031")]
+port_irq!(GPIOC, GpioCIrq, pac::GPIO, pac::GPIOA_BASE + 0x800, 2);
+#[cfg(feature = "cw32w031")]
+port_irq!(GPIOF, GpioFIrq, pac::GPIO, pac::GPIOA_BASE + 0x1400, 3);

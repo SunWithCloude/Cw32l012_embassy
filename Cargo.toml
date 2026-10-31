@@ -3,7 +3,7 @@ name = "embassy-cw32"
 version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
-description = "embassy async HAL for CW32 Cortex-M0+ MCUs (Wuhan Xinyuan / CMSemicon): CW32L012/L010/L011 and CW32F030/A030"
+description = "embassy async HAL for CW32 Cortex-M0+ MCUs (Wuhan Xinyuan / CMSemicon): CW32L012/L010/L011/L031/L052/R031/W031 and CW32F030/A030"
 categories = ["embedded", "hardware-support", "no-std", "async"]
 keywords = ["cw32", "cw32l012", "cw32l010", "cw32l011", "cw32f030", "embassy", "async"]
 license = "MIT OR Apache-2.0"
@@ -22,6 +22,10 @@ cw32l012-pac = { path = "../cw32l012-pac", version = "0.2", default-features = f
 cw32f030-pac = { path = "../cw32-pacs/crates/cw32f030-pac", optional = true }
 cw32l010-pac = { path = "../cw32-pacs/crates/cw32l010-pac", optional = true }
 cw32l011-pac = { path = "../cw32-pacs/crates/cw32l011-pac", optional = true }
+cw32l031-pac = { path = "../cw32-pacs/crates/cw32l031-pac", optional = true }
+cw32l052-pac = { path = "../cw32-pacs/crates/cw32l052-pac", optional = true }
+cw32r031-pac = { path = "../cw32-pacs/crates/cw32r031-pac", optional = true }
+cw32w031-pac = { path = "../cw32-pacs/crates/cw32w031-pac", optional = true }
 critical-section = { version = "1.2", features = ["restore-state-u8"] }
 embassy-sync = "0.8"
 embassy-time = "0.5"
@@ -41,14 +45,19 @@ default = ["critical-section-impl", "cw32l012"]
 # 或 cortex-m 的实现同时启用（链接冲突）。
 critical-section-impl = []
 # 家族选择(互斥):cw32l012/cw32l010/cw32l011 = L012 代外设(KEY 写保护 +
-# UART 错误位 8..11 + APBEN1 布局);cw32f030 = 经典代(无 KEY + 错误位
-# 3/4 + APBEN2 布局,CW32F030/CW32A030 寄存器兼容)
+# UART 错误位 8..11 + APBEN1 布局);cw32f030/cw32l031/cw32l052/cw32r031/
+# cw32w031 = 经典代(无 KEY + 错误位 3/4 + APBEN2 的 UART1/SPI1 布局,
+# 寄存器面与 CW32F030 同源)
 cw32l012 = ["dep:cw32l012-pac"]
 cw32l010 = ["dep:cw32l010-pac"]
 cw32l011 = ["dep:cw32l011-pac"]
 cw32f030 = ["dep:cw32f030-pac"]
+cw32l031 = ["dep:cw32l031-pac"]
+cw32l052 = ["dep:cw32l052-pac"]
+cw32r031 = ["dep:cw32r031-pac"]
+cw32w031 = ["dep:cw32w031-pac"]
 # 透传所选家族 PAC 的 rt feature(cortex-m-rt 向量表)
-rt = ["cw32l012-pac?/rt", "cw32l010-pac?/rt", "cw32l011-pac?/rt", "cw32f030-pac?/rt"]
+rt = ["cw32l012-pac?/rt", "cw32l010-pac?/rt", "cw32l011-pac?/rt", "cw32f030-pac?/rt", "cw32l031-pac?/rt", "cw32l052-pac?/rt", "cw32r031-pac?/rt", "cw32w031-pac?/rt"]
 
 # 示例依赖仅对 ARM 裸机目标启用（宿主机 cargo test 不拉取，
 # 否则 cortex-m 平台代码在 x86 上编译失败）
