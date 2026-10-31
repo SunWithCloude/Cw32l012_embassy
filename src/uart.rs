@@ -24,9 +24,12 @@ use crate::interrupt::{Binding, IrqHandler, interrupt};
 use crate::pac;
 
 // ================= 家族位常量面 =================
-// 两代共用位:TXBE=0 / TC=1 / RC=2;错误位不同(L012 FE8/PE9/NE10/ORE11,
-// F030 经典 FE3/PE4 且无 NE/ORE 标志)。ICR 两代均为 R1W0(写 0 清除):
-// L012 依据 UM V1.4;F030 依据厂商库 cw32f030_uart.c 的 REGBITS_CLR(ICR, flag)。
+// 全家族共用位:TXBE=0 / TC=1 / RC=2。错误位两代不同:
+// L012 代组(L010/L011/L012) FE8/PE9/NE10/ORE11;经典组 FE3/PE4 且无 NE/ORE。
+// ICR 两代均为 R1W0(写 0 清除):L012 依据 UM V1.4;F030 依据厂商库
+// cw32f030_uart.c 的 REGBITS_CLR(ICR, flag)。
+// L012 用手写 PAC 的 ISR_* 常量名;L010/L011 生成 PAC 是小写字段 _MASK
+// 风格,在此适配成统一名(寄存器布局与 L012 手册同源)。
 #[cfg(feature = "cw32l012")]
 pub(crate) mod ub {
     pub use crate::pac::uart::*;
@@ -35,6 +38,54 @@ pub(crate) mod ub {
     /// 接收就绪 + 全部错误位
     pub const RX_ALL: u32 = ISR_RC | ERR_ALL;
     /// 错误种类解码(L012 含 NE/ORE)
+    pub fn decode_error(isr: u32) -> Option<super::UartError> {
+        if isr & ISR_ORE != 0 {
+            Some(super::UartError::Overrun)
+        } else if isr & ISR_FE != 0 {
+            Some(super::UartError::Framing)
+        } else if isr & ISR_PE != 0 {
+            Some(super::UartError::Parity)
+        } else if isr & ISR_NE != 0 {
+            Some(super::UartError::Noise)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+pub(crate) mod ub {
+    use crate::pac::uart as raw;
+    // 生成 PAC 的位常量按寄存器嵌套(uart::isr::txe_MASK 风格)
+    /// 发送缓冲空(ISR/IER bit0)
+    pub const ISR_TXBE: u32 = raw::isr::txe_MASK;
+    /// 发送完成(bit1)
+    pub const ISR_TC: u32 = raw::isr::tc_MASK;
+    /// 接收完成(bit2)
+    pub const ISR_RC: u32 = raw::isr::rc_MASK;
+    /// 帧错误(bit8)
+    pub const ISR_FE: u32 = raw::isr::fe_MASK;
+    /// 校验错(bit9)
+    pub const ISR_PE: u32 = raw::isr::pe_MASK;
+    /// 噪声(bit10)
+    pub const ISR_NE: u32 = raw::isr::ne_MASK;
+    /// 溢出(bit11)
+    pub const ISR_ORE: u32 = raw::isr::ore_MASK;
+    /// 发送使能
+    pub const CR1_TXEN: u32 = raw::cr1::txen_MASK;
+    /// 接收使能
+    pub const CR1_RXEN: u32 = raw::cr1::rxen_MASK;
+    /// R1W0 全 1(无动作)基准 = ICR 已定义位并集
+    /// (tc..rxmatch,bit1..12;ICR 无 TXE 位)
+    pub const ICR_NONE: u32 = 0x1FFC;
+    /// 全部接收错误位掩码(ORE|NE|PE|FE)
+    pub const ERR_ALL: u32 = ISR_ORE | ISR_NE | ISR_PE | ISR_FE;
+    /// 接收就绪 + 全部错误位
+    pub const RX_ALL: u32 = ISR_RC | ERR_ALL;
+    /// 清全部接收错误(R1W0:错误位写 0)
+    pub const ICR_CLEAR_RX_ERRORS: u32 = ICR_NONE & !ERR_ALL;
+
+    /// 错误种类解码(优先级同 L012:ORE > FE > PE > NE)
     pub fn decode_error(isr: u32) -> Option<super::UartError> {
         if isr & ISR_ORE != 0 {
             Some(super::UartError::Overrun)
@@ -137,7 +188,9 @@ impl embedded_io::Error for UartError {
 fn instance_of(regs: &'static crate::Uart) -> usize {
     match regs as *const _ as usize {
         pac::UART1_BASE => 0,
+        #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
         pac::UART2_BASE => 1,
+        #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
         pac::UART3_BASE => 2,
         _ => unreachable!("非 UART 寄存器块"),
     }
@@ -179,12 +232,26 @@ impl Uart {
     /// * `regs` — UART1/2/3 寄存器块
     /// * `tx` / `rx` — 引脚（内部自动 `set_af(af)`）
     /// * `_irqs` — 中断绑定证明（`bind_interrupts!` 生成的结构体）
+    #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
     pub fn new(
         regs: &'static crate::Uart,
         tx: Pin<impl GpioPort>,
         rx: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::UART1> + Binding<interrupt::UART2> + Binding<interrupt::UART3>,
+        config: Config,
+    ) -> Self {
+        Self::new_inner(regs, tx, rx, af, config)
+    }
+
+    /// 初始化 UART1（L010/L011 单实例家族的入口）。
+    #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+    pub fn new(
+        regs: &'static crate::Uart,
+        tx: Pin<impl GpioPort>,
+        rx: Pin<impl GpioPort>,
+        af: u8,
+        _irqs: impl Binding<interrupt::UART1>,
         config: Config,
     ) -> Self {
         Self::new_inner(regs, tx, rx, af, config)
@@ -202,6 +269,7 @@ impl Uart {
         Self::new_inner(regs, tx, rx, af, config)
     }
 
+    #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
     /// 初始化 UART2（IRQ 绑定类型收窄到 UART2）。
     pub fn new_uart2(
         regs: &'static crate::Uart,
@@ -214,6 +282,7 @@ impl Uart {
         Self::new_inner(regs, tx, rx, af, config)
     }
 
+    #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
     /// 初始化 UART3（IRQ 绑定类型收窄到 UART3）。
     pub fn new_uart3(
         regs: &'static crate::Uart,
@@ -246,6 +315,12 @@ impl Uart {
             };
             sysctrl.apben1.write(pac::sysctrl::KEY | gate);
         }
+        #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+        {
+            assert!(idx == 0, "L010/L011 仅 UART1 实例");
+            // uart1en = APBEN1.3(L012 代组布局,带 KEY 写保护)
+            sysctrl.apben1.write(crate::SYSCTRL_KEY | (1 << 3));
+        }
         #[cfg(feature = "cw32f030")]
         {
             // F030 APBEN 无 KEY 保护,用读改写防顶掉其它使能位
@@ -273,6 +348,9 @@ impl Uart {
 
         // v0.1 遗漏修复：使能 NVIC 中断线（向量有了但 ISER 没开，
         // 任何 UART 中断都进不来——2026-10-24 移植缓冲驱动时发现）
+        #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+        crate::interrupt::nvic_enable::<interrupt::UART1>();
+        #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
         match idx {
             0 => crate::interrupt::nvic_enable::<interrupt::UART1>(),
             1 => crate::interrupt::nvic_enable::<interrupt::UART2>(),
@@ -499,6 +577,7 @@ impl BufferedUart {
         Self::finish(regs, 0)
     }
 
+    #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
     /// 初始化 UART2 缓冲式驱动。
     pub fn new_uart2(
         regs: &'static crate::Uart,
@@ -512,6 +591,7 @@ impl BufferedUart {
         Self::finish(regs, 1)
     }
 
+    #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
     /// 初始化 UART3 缓冲式驱动。
     pub fn new_uart3(
         regs: &'static crate::Uart,
@@ -753,16 +833,20 @@ impl IrqHandler<interrupt::UART1> for Uart1Irq {
     }
 }
 
+#[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
 /// UART2 中断标记（IRQ28）
 pub struct Uart2Irq;
+#[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
 impl IrqHandler<interrupt::UART2> for Uart2Irq {
     fn call() {
         on_irq(1, unsafe { &*(pac::UART2_BASE as *const crate::Uart) });
     }
 }
 
+#[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
 /// UART3 中断标记（IRQ29）
 pub struct Uart3Irq;
+#[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
 impl IrqHandler<interrupt::UART3> for Uart3Irq {
     fn call() {
         on_irq(2, unsafe { &*(pac::UART3_BASE as *const crate::Uart) });

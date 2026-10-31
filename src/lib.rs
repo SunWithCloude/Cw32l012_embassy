@@ -54,15 +54,33 @@
 #![no_std]
 #![allow(rustdoc::broken_intra_doc_links)]
 
-// 家族互斥/必选检查
+// 家族互斥/必选检查(两两互斥 + 必选其一)
+#[cfg(all(feature = "cw32l012", feature = "cw32l010"))]
+compile_error!("家族 feature 互斥:一个固件只选一个家族");
+#[cfg(all(feature = "cw32l012", feature = "cw32l011"))]
+compile_error!("家族 feature 互斥:一个固件只选一个家族");
 #[cfg(all(feature = "cw32l012", feature = "cw32f030"))]
-compile_error!("cw32l012 与 cw32f030 feature 互斥,一个固件只选一个家族");
-#[cfg(not(any(feature = "cw32l012", feature = "cw32f030")))]
-compile_error!("必须启用一个家族 feature:cw32l012 或 cw32f030");
+compile_error!("家族 feature 互斥:一个固件只选一个家族");
+#[cfg(all(feature = "cw32l010", feature = "cw32l011"))]
+compile_error!("家族 feature 互斥:一个固件只选一个家族");
+#[cfg(all(feature = "cw32l010", feature = "cw32f030"))]
+compile_error!("家族 feature 互斥:一个固件只选一个家族");
+#[cfg(all(feature = "cw32l011", feature = "cw32f030"))]
+compile_error!("家族 feature 互斥:一个固件只选一个家族");
+#[cfg(not(any(
+    feature = "cw32l012",
+    feature = "cw32l010",
+    feature = "cw32l011",
+    feature = "cw32f030"
+)))]
+compile_error!("必须启用一个家族 feature:cw32l012 / cw32l010 / cw32l011 / cw32f030");
 
 #[cfg(feature = "cw32l012")]
 pub mod adc;
 pub mod gpio;
+// I2C 暂只覆盖 L012/F030(L010 位面待核,L011 无 I2C 硬件);
+// GPIO/UART/SPI 覆盖 L012 代组(L010/L011 已接入)
+#[cfg(not(any(feature = "cw32l010", feature = "cw32l011")))]
 pub mod i2c;
 pub mod interrupt;
 #[cfg(feature = "cw32f030")]
@@ -75,6 +93,10 @@ pub mod uart;
 pub use cw32f030_pac as pac;
 #[cfg(feature = "cw32l012")]
 pub use cw32l012_pac as pac;
+#[cfg(feature = "cw32l010")]
+pub use cw32l010_pac as pac;
+#[cfg(feature = "cw32l011")]
+pub use cw32l011_pac as pac;
 pub use pac::Peripherals;
 
 /// 两套 PAC 的寄存器原语统一别名(字段访问签名用)
@@ -101,6 +123,15 @@ pub type Spi = pac::Spi;
 pub type I2c = pac::I2c;
 #[cfg(feature = "cw32l012")]
 pub type Adc = pac::Adc;
+// 生成家族(L012 代):类型名同头文件原名(全大写)
+#[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+pub type Gpio = pac::GPIO;
+#[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+pub type Sysctrl = pac::SYSCTRL;
+#[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+pub type Uart = pac::UART;
+#[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+pub type Spi = pac::SPI;
 #[cfg(feature = "cw32f030")]
 pub type Gpio = pac::GPIO;
 #[cfg(feature = "cw32f030")]
@@ -129,9 +160,11 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        // 复位默认时钟:L012 = HSI 96MHz/24 = 4MHz;F030 = HSI 48MHz/6 = 8MHz
-        // (pdsc processor Dclock=8MHz 佐证;上板实测 48MHz 假设下 SysTick 慢 6 倍)
-        #[cfg(feature = "cw32l012")]
+        // 复位默认时钟:L012 代组(L010/L011/L012) = HSI 96MHz/24 = 4MHz
+        // (L010/L011 的 HSIOSC 48/96MHz,复位默认分频档同为 nominal 4MHz);
+        // F030 = HSI 48MHz/6 = 8MHz(pdsc processor Dclock=8MHz 佐证,
+        // 上板实测 48MHz 假设下 SysTick 慢 6 倍)
+        #[cfg(any(feature = "cw32l012", feature = "cw32l010", feature = "cw32l011"))]
         let hz = 4_000_000;
         #[cfg(feature = "cw32f030")]
         let hz = 8_000_000;
@@ -226,38 +259,41 @@ mod cs_impl_host {
 // 两代的 AHBEN GPIO 位:A/B/C 相同(4/5/6),F 不同(L012=7,F030=9);
 // 且生成版 PAC 无位常量,统一用位掩码写。
 
-/// SYSCTRL 写保护键。⚠ 仅 L012 需要:其 KEY 保护寄存器须高 16 位
-/// 0x5A5A 才生效。**F030 经典家族的 AHBEN/APBEN 无 KEY 保护**(厂商库
-/// `CW_SYSCTRL->APBEN2 |= Periph` 直接写,2026-10-24 上板实测带 KEY 写
-/// 会顶掉使能位),仅 IER/复位类寄存器带 KEY。
-#[cfg(feature = "cw32l012")]
+/// SYSCTRL 写保护键。⚠ 仅 L012 代组(L010/L011/L012)需要:其 KEY 保护
+/// 寄存器须高 16 位 0x5A5A 才生效。**经典家族(F030/L031/L052/L083/R031/
+/// W031/F003/F020)的 AHBEN/APBEN 无 KEY 保护**(厂商库 `CW_SYSCTRL->APBEN2
+/// |= Periph` 直接写;F030 2026-10-24 上板实测带 KEY 写会顶掉使能位;L031/
+/// L052 的门控 sidecar 亦无 key 元数据),仅 IER/复位类寄存器带 KEY。
+#[cfg(any(feature = "cw32l012", feature = "cw32l010", feature = "cw32l011"))]
 pub const SYSCTRL_KEY: u32 = 0x5A5A << 16;
 
-/// 打开 GPIOA 端口时钟(AHBEN bit4,两代相同)。
+/// 打开 GPIOA 端口时钟(AHBEN bit4,全家族相同)。
 pub fn sysctrl_enable_gpioa(sysctrl: &'static crate::Sysctrl) {
-    #[cfg(feature = "cw32l012")]
+    #[cfg(any(feature = "cw32l012", feature = "cw32l010", feature = "cw32l011"))]
     sysctrl.ahben.write(SYSCTRL_KEY | (1 << 4));
     #[cfg(feature = "cw32f030")]
     sysctrl.ahben.modify(|v| v | (1 << 4));
 }
 
-/// 打开 GPIOB 端口时钟(AHBEN bit5,两代相同)。
+/// 打开 GPIOB 端口时钟(AHBEN bit5,全家族相同)。
 pub fn sysctrl_enable_gpiob(sysctrl: &'static crate::Sysctrl) {
-    #[cfg(feature = "cw32l012")]
+    #[cfg(any(feature = "cw32l012", feature = "cw32l010", feature = "cw32l011"))]
     sysctrl.ahben.write(SYSCTRL_KEY | (1 << 5));
     #[cfg(feature = "cw32f030")]
     sysctrl.ahben.modify(|v| v | (1 << 5));
 }
 
-/// 打开 GPIOC 端口时钟(AHBEN bit6,两代相同)。
+/// 打开 GPIOC 端口时钟(AHBEN bit6;L010 无 GPIOC)。
+#[cfg(any(feature = "cw32l012", feature = "cw32l011", feature = "cw32f030"))]
 pub fn sysctrl_enable_gpioc(sysctrl: &'static crate::Sysctrl) {
-    #[cfg(feature = "cw32l012")]
+    #[cfg(any(feature = "cw32l012", feature = "cw32l011"))]
     sysctrl.ahben.write(SYSCTRL_KEY | (1 << 6));
     #[cfg(feature = "cw32f030")]
     sysctrl.ahben.modify(|v| v | (1 << 6));
 }
 
-/// 打开 GPIOF 端口时钟(L012:AHBEN bit7;F030:bit9)。
+/// 打开 GPIOF 端口时钟(L012:AHBEN bit7;F030:bit9;L010/L011 无 GPIOF)。
+#[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
 pub fn sysctrl_enable_gpiof(sysctrl: &'static crate::Sysctrl) {
     #[cfg(feature = "cw32l012")]
     sysctrl.ahben.write(SYSCTRL_KEY | (1 << 7));

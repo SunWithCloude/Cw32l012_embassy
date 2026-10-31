@@ -77,6 +77,7 @@ pub enum Reg {
     Tog,
 }
 
+#[allow(unused_macros)]
 macro_rules! impl_port {
     ($typ:ty, $bank:expr, $isr:ident, $icr:ident, $idr:ident, $brr:ident) => {
         fn bank(&self) -> usize {
@@ -129,6 +130,58 @@ macro_rules! impl_port {
     };
 }
 
+/// 无 PDR（下拉）变体：L010/L011 的 GPIO 无 pdr 字段（下拉电阻仅
+/// L012 PF3 有实际意义，这两个家族连寄存器都没有——Pdr 访问编译期拒绝）。
+#[allow(unused_macros)]
+macro_rules! impl_port_no_pdr {
+    ($typ:ty, $bank:expr, $isr:ident, $icr:ident, $idr:ident, $brr:ident) => {
+        fn bank(&self) -> usize {
+            $bank(self)
+        }
+        fn rd(&self, r: Reg) -> u32 {
+            match r {
+                Reg::Dir => self.dir.read(),
+                Reg::Analog => self.analog.read(),
+                Reg::OpEndrain => self.opendrain.read(),
+                Reg::Pur => self.pur.read(),
+                Reg::Riseie => self.riseie.read(),
+                Reg::Fallie => self.fallie.read(),
+                Reg::Isr => self.$isr.read(),
+                Reg::Idr => self.$idr.read(),
+                Reg::Odr => self.odr.read(),
+                _ => unreachable!("该家族无此寄存器 / 只写寄存器不可读"),
+            }
+        }
+        fn wr(&self, r: Reg, v: u32) {
+            match r {
+                Reg::Dir => self.dir.write(v),
+                Reg::Analog => self.analog.write(v),
+                Reg::OpEndrain => self.opendrain.write(v),
+                Reg::Pur => self.pur.write(v),
+                Reg::Riseie => self.riseie.write(v),
+                Reg::Fallie => self.fallie.write(v),
+                Reg::Icr => self.$icr.write(v),
+                Reg::Brr => self.$brr.write(v),
+                Reg::Bsrr => self.bsrr.write(v),
+                Reg::Tog => self.tog.write(v),
+                _ => unreachable!("该家族无此寄存器 / 只读寄存器不可写"),
+            }
+        }
+        fn mod_(&self, r: Reg, f: impl FnOnce(u32) -> u32) {
+            match r {
+                Reg::Dir => self.dir.modify(f),
+                Reg::Analog => self.analog.modify(f),
+                Reg::OpEndrain => self.opendrain.modify(f),
+                Reg::Pur => self.pur.modify(f),
+                Reg::Riseie => self.riseie.modify(f),
+                Reg::Fallie => self.fallie.modify(f),
+                Reg::Odr => self.odr.modify(f),
+                _ => unreachable!("该家族无此寄存器 / 该寄存器只支持读/写"),
+            }
+        }
+    };
+}
+
 #[cfg(feature = "cw32l012")]
 impl GpioPort for pac::Gpio {
     impl_port!(
@@ -137,6 +190,28 @@ impl GpioPort for pac::Gpio {
             pac::GPIOA_BASE => 0,
             pac::GPIOB_BASE => 1,
             pac::GPIOC_BASE => 2,
+            _ => 3,
+        },
+        isr,
+        icr,
+        idr,
+        brr
+    );
+    fn set_af(&self, pin: u8, af: u8) {
+        set_af_impl(Some(&self.afrl), Some(&self.afrh), pin, af)
+    }
+}
+
+/// L012 代生成家族（L010/L011）：单一 GPIO 类型覆盖全部端口，
+/// 无 PDR 下拉寄存器。端口基址步进 0x400（A/B/C…）；GPIOC 仅 L011 有。
+#[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+impl GpioPort for pac::GPIO {
+    impl_port_no_pdr!(
+        pac::GPIO,
+        |s: &Self| match s as *const _ as usize {
+            pac::GPIOA_BASE => 0,
+            a if a == pac::GPIOA_BASE + 0x400 => 1,
+            a if a == pac::GPIOA_BASE + 0x800 => 2,
             _ => 3,
         },
         isr,
@@ -453,12 +528,18 @@ impl<P: GpioPort> Input<P> {
         let m = self.pin.mask();
         let port = self.pin.port;
         let bank = port.bank();
-        // 使能 NVIC 中断线（按槽位;GPIOA..F 在两代家族中断号相同布局）
+        // 使能 NVIC 中断线（按槽位;端口存在性随家族不同:
+        // GPIOC 仅 L011/L012/F030,GPIOF 仅 L012/F030——L010/L011
+        // 的槽位 2/3 无对应中断,never 分支防误用）
         match bank {
             0 => crate::interrupt::nvic_enable::<interrupt::GPIOA>(),
             1 => crate::interrupt::nvic_enable::<interrupt::GPIOB>(),
+            #[cfg(any(feature = "cw32l011", feature = "cw32l012", feature = "cw32f030"))]
             2 => crate::interrupt::nvic_enable::<interrupt::GPIOC>(),
+            #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
             _ => crate::interrupt::nvic_enable::<interrupt::GPIOF>(),
+            #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+            _ => unreachable!("该家族无此端口"),
         }
         critical_section::with(|_| {
             port.wr(Reg::Icr, m);
@@ -554,3 +635,12 @@ port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOB_BASE, 1);
 port_irq!(GPIOC, GpioCIrq, pac::GPIOC, pac::GPIOC_BASE, 2);
 #[cfg(feature = "cw32f030")]
 port_irq!(GPIOF, GpioFIrq, pac::GPIOF, pac::GPIOF_BASE, 3);
+
+// L012 代生成家族:单一 GPIO 类型,基址步进 0x400;
+// GPIOC 仅 L011 有,L010/L011 均无 GPIOF
+#[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+port_irq!(GPIOA, GpioAIrq, pac::GPIO, pac::GPIOA_BASE, 0);
+#[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOA_BASE + 0x400, 1);
+#[cfg(feature = "cw32l011")]
+port_irq!(GPIOC, GpioCIrq, pac::GPIO, pac::GPIOA_BASE + 0x800, 2);
