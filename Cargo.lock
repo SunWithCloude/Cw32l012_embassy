@@ -153,6 +153,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cw32l083-pac"
+version = "0.1.0"
+dependencies = [
+ "cortex-m-rt",
+]
+
+[[package]]
 name = "cw32r031-pac"
 version = "0.1.0"
 dependencies = [
@@ -222,6 +229,7 @@ dependencies = [
  "cw32l012-pac",
  "cw32l031-pac",
  "cw32l052-pac",
+ "cw32l083-pac",
  "cw32r031-pac",
  "cw32w031-pac",
  "embassy-executor",
