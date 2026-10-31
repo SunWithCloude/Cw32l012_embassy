@@ -443,7 +443,11 @@ pub use l012::*;
 /// F030 经典家族驱动。寄存器位面取自生成 PAC（`pac::i2c`，与厂商头
 /// `cw32f030_i2c.h` 一致），状态机时序逐条对照厂商库 `cw32f030_i2c.c`
 /// （注释中的 `c:NN` 即该文件行号）。
-#[cfg(feature = "cw32f030")]
+// L010 的 I2C 与 F030 同构(cr/stat/dr/addr0-2/brr,8051 状态机,CR 位面
+// flt/aa/si/sto/sta/en 完全一致,l010 多 sclinsrc/sdainsrc 两个输入源位
+// 不参与主机流程)——复用本分支。⚠ 状态码语义级验证待 L010 板,编译级
+// 依据为两侧生成 PAC 的位面比对(2026-10-31)。
+#[cfg(any(feature = "cw32f030", feature = "cw32l010"))]
 mod f030 {
     use core::future::poll_fn;
     use core::task::Poll;
@@ -549,6 +553,7 @@ mod f030 {
     fn instance_of(regs: &'static pac::I2C) -> usize {
         match regs as *const _ as usize {
             pac::I2C1_BASE => 0,
+            #[cfg(feature = "cw32f030")]
             pac::I2C2_BASE => 1,
             _ => unreachable!("非 I2C 寄存器块"),
         }
@@ -600,12 +605,26 @@ mod f030 {
         /// * `regs` — I2C1/2 寄存器块
         /// * `scl` / `sda` — 引脚（内部自动 `set_af(af)`；常用组合见模块文档）
         /// * `_irqs` — 中断绑定证明（`bind_interrupts!` 生成的结构体）
+        #[cfg(feature = "cw32f030")]
         pub fn new(
             regs: &'static pac::I2C,
             scl: Pin<impl GpioPort>,
             sda: Pin<impl GpioPort>,
             af: u8,
             _irqs: impl Binding<interrupt::I2C1> + Binding<interrupt::I2C2>,
+            config: Config,
+        ) -> Self {
+            Self::new_inner(regs, scl, sda, af, config)
+        }
+
+        /// 初始化 I2C(L010 单实例家族入口)。
+        #[cfg(feature = "cw32l010")]
+        pub fn new(
+            regs: &'static pac::I2C,
+            scl: Pin<impl GpioPort>,
+            sda: Pin<impl GpioPort>,
+            af: u8,
+            _irqs: impl Binding<interrupt::I2C1>,
             config: Config,
         ) -> Self {
             Self::new_inner(regs, scl, sda, af, config)
@@ -623,7 +642,8 @@ mod f030 {
             Self::new_inner(regs, scl, sda, af, config)
         }
 
-        /// 初始化 I2C2（IRQ 绑定收窄到 I2C2）。
+        /// 初始化 I2C2（IRQ 绑定收窄到 I2C2；L010 无第二实例）。
+        #[cfg(feature = "cw32f030")]
         pub fn new_i2c2(
             regs: &'static pac::I2C,
             scl: Pin<impl GpioPort>,
@@ -647,6 +667,13 @@ mod f030 {
             // （uart/spi.rs F030 分支同款）；I2C1=APBEN1.11、I2C2=APBEN1.12
             // （PAC sysctrl::apben1::i2c1/i2c2 位域）
             let sysctrl = unsafe { &*(pac::SYSCTRL_BASE as *const crate::Sysctrl) };
+            #[cfg(feature = "cw32l010")]
+            {
+                assert!(idx == 0, "L010 仅 I2C1 实例");
+                // i2c1en = APBEN1.6(L012 代组布局,带 KEY 写保护)
+                sysctrl.apben1.write(crate::SYSCTRL_KEY | (1 << 6));
+            }
+            #[cfg(feature = "cw32f030")]
             match idx {
                 0 => sysctrl.apben1.modify(|v| v | (1 << 11)),
                 _ => sysctrl.apben1.modify(|v| v | (1 << 12)),
@@ -687,6 +714,9 @@ mod f030 {
             // 使能 NVIC 中断线（IRQ23/24，两代 typelevel 同名同号）。中断仅由
             // CR.SI 门控——寄存器块无 IER（厂商库 I2C_GetIrq 即读 CR bit3，
             // c:282-286），SI=0 期间线静默，派发侧再压线防风暴。
+            #[cfg(feature = "cw32l010")]
+            crate::interrupt::nvic_enable::<interrupt::I2C1>();
+            #[cfg(feature = "cw32f030")]
             match idx {
                 0 => crate::interrupt::nvic_enable::<interrupt::I2C1>(),
                 _ => crate::interrupt::nvic_enable::<interrupt::I2C2>(),
@@ -722,6 +752,9 @@ mod f030 {
                 } else {
                     // 开 NVIC 线（IRQ 派发侧会再压掉，防无等待者风暴；
                     // 线关断期间 SI 置位会被 NVIC 挂起，重开即触发——不丢唤醒）
+                    #[cfg(feature = "cw32l010")]
+                    crate::interrupt::nvic_enable::<interrupt::I2C1>();
+                    #[cfg(feature = "cw32f030")]
                     match self.idx {
                         0 => crate::interrupt::nvic_enable::<interrupt::I2C1>(),
                         _ => crate::interrupt::nvic_enable::<interrupt::I2C2>(),
@@ -1031,6 +1064,9 @@ mod f030 {
     fn on_irq(idx: usize, regs: &'static pac::I2C) {
         let _ = regs.stat.read();
         WAKER[idx].wake();
+        #[cfg(feature = "cw32l010")]
+        nvic_disable::<interrupt::I2C1>();
+        #[cfg(feature = "cw32f030")]
         match idx {
             0 => nvic_disable::<interrupt::I2C1>(),
             _ => nvic_disable::<interrupt::I2C2>(),
@@ -1045,8 +1081,10 @@ mod f030 {
         }
     }
 
-    /// I2C2 中断标记（IRQ24）
+    /// I2C2 中断标记（IRQ24；L010 无第二实例）
+    #[cfg(feature = "cw32f030")]
     pub struct I2c2Irq;
+    #[cfg(feature = "cw32f030")]
     impl IrqHandler<interrupt::I2C2> for I2c2Irq {
         fn call() {
             on_irq(1, unsafe { &*(pac::I2C2_BASE as *const pac::I2C) });
@@ -1054,5 +1092,5 @@ mod f030 {
     }
 }
 
-#[cfg(feature = "cw32f030")]
+#[cfg(any(feature = "cw32f030", feature = "cw32l010"))]
 pub use f030::*;

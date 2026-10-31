@@ -78,9 +78,8 @@ compile_error!("必须启用一个家族 feature:cw32l012 / cw32l010 / cw32l011 
 #[cfg(feature = "cw32l012")]
 pub mod adc;
 pub mod gpio;
-// I2C 暂只覆盖 L012/F030(L010 位面待核,L011 无 I2C 硬件);
-// GPIO/UART/SPI 覆盖 L012 代组(L010/L011 已接入)
-#[cfg(not(any(feature = "cw32l010", feature = "cw32l011")))]
+// I2C 覆盖 L012/F030/L010(L010 与 F030 同构,编译级接入;L011 无 I2C 硬件)
+#[cfg(not(feature = "cw32l011"))]
 pub mod i2c;
 pub mod interrupt;
 #[cfg(feature = "cw32f030")]
