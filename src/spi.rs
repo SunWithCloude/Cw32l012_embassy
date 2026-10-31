@@ -96,7 +96,7 @@ mod fam {
 // 经典组(F030/L031/L052/R031/W031 逐个接入):SPI1 位面与 F030 完全
 // 相同(逐 PAC 核对:EN@CR1[6]、BR 3 位@CR1[5:3]、MSTR2/CPOL1/CPHA0/
 // LSBF7/SSM9),单实例 SPI1=APBEN2.8
-#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031"))]
+#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
 mod fam {
     /// F030 SYSCTRL 的 AHBEN/APBEN 无 KEY 保护(厂商库 |= 直写)
     /// 门控:SPI1=APBEN2.8、SPI2=APBEN1.6
@@ -220,7 +220,7 @@ impl Spi {
     }
 
     /// 经典代单 SPI 家族(l031 等)入口:中断名 SPI1,单实例
-    #[cfg(any(feature = "cw32l031", feature = "cw32l052", feature = "cw32r031"))]
+    #[cfg(any(feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
     pub fn new(
         regs: &'static crate::Spi,
         sck: Pin<impl GpioPort>,
@@ -252,7 +252,8 @@ impl Spi {
         feature = "cw32f030",
         feature = "cw32l031",
         feature = "cw32l052",
-        feature = "cw32r031"
+        feature = "cw32r031",
+        feature = "cw32w031"
     ))]
     pub fn new_spi1(
         regs: &'static crate::Spi,
@@ -340,7 +341,7 @@ impl Spi {
         // 使能 NVIC 中断线(L010/L011 的 SPI 中断名为 SPI,其余为 SPI1)
         #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
         crate::interrupt::nvic_enable::<interrupt::SPI>();
-        #[cfg(any(feature = "cw32l031", feature = "cw32l052", feature = "cw32r031"))]
+        #[cfg(any(feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
         crate::interrupt::nvic_enable::<interrupt::SPI1>();
         #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
         match idx {
@@ -482,7 +483,8 @@ impl IrqHandler<interrupt::SPI> for Spi1Irq {
     feature = "cw32f030",
     feature = "cw32l031",
     feature = "cw32l052",
-    feature = "cw32r031"
+    feature = "cw32r031",
+    feature = "cw32w031"
 ))]
 pub struct Spi1Irq;
 #[cfg(any(
@@ -490,7 +492,8 @@ pub struct Spi1Irq;
     feature = "cw32f030",
     feature = "cw32l031",
     feature = "cw32l052",
-    feature = "cw32r031"
+    feature = "cw32r031",
+    feature = "cw32w031"
 ))]
 impl IrqHandler<interrupt::SPI1> for Spi1Irq {
     fn call() {

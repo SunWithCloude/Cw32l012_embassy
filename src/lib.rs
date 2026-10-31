@@ -67,7 +67,7 @@ macro_rules! fam_exclusive {
         fam_exclusive!($($rest),*);
     };
 }
-fam_exclusive!("cw32l012", "cw32l010", "cw32l011", "cw32f030", "cw32l031", "cw32l052", "cw32r031");
+fam_exclusive!("cw32l012", "cw32l010", "cw32l011", "cw32f030", "cw32l031", "cw32l052", "cw32r031", "cw32w031");
 #[cfg(not(any(
     feature = "cw32l012",
     feature = "cw32l010",
@@ -75,9 +75,10 @@ fam_exclusive!("cw32l012", "cw32l010", "cw32l011", "cw32f030", "cw32l031", "cw32
     feature = "cw32f030",
     feature = "cw32l031",
     feature = "cw32l052",
-    feature = "cw32r031"
+    feature = "cw32r031",
+    feature = "cw32w031"
 )))]
-compile_error!("必须启用一个家族 feature:cw32l012 / cw32l010 / cw32l011 / cw32f030 / cw32l031 / cw32l052 / cw32r031");
+compile_error!("必须启用一个家族 feature:cw32l012 / cw32l010 / cw32l011 / cw32f030 / cw32l031 / cw32l052 / cw32r031 / cw32w031");
 
 #[cfg(feature = "cw32l012")]
 pub mod adc;
@@ -106,6 +107,8 @@ pub use cw32l031_pac as pac;
 pub use cw32l052_pac as pac;
 #[cfg(feature = "cw32r031")]
 pub use cw32r031_pac as pac;
+#[cfg(feature = "cw32w031")]
+pub use cw32w031_pac as pac;
 pub use pac::Peripherals;
 
 /// 两套 PAC 的寄存器原语统一别名(字段访问签名用)
@@ -143,15 +146,15 @@ pub type Uart = pac::UART;
 pub type Spi = pac::SPI;
 // 经典代生成家族(f030/l031/r031/w031/l052 同代位面):类型名同头文件
 // 原名(全大写)
-#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031"))]
+#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
 pub type Gpio = pac::GPIO;
-#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031"))]
+#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
 pub type Sysctrl = pac::SYSCTRL;
-#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031"))]
+#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
 pub type Uart = pac::UART;
-#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031"))]
+#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
 pub type Spi = pac::SPI;
-#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031"))]
+#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
 pub type I2c = pac::I2C;
 
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -180,7 +183,7 @@ impl Default for Config {
         // 实测同款 8MHz 假设)
         #[cfg(any(feature = "cw32l012", feature = "cw32l010", feature = "cw32l011"))]
         let hz = 4_000_000;
-        #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031"))]
+        #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
         let hz = 8_000_000;
         Config {
             hclk_hz: hz,
@@ -285,7 +288,7 @@ pub const SYSCTRL_KEY: u32 = 0x5A5A << 16;
 pub fn sysctrl_enable_gpioa(sysctrl: &'static crate::Sysctrl) {
     #[cfg(any(feature = "cw32l012", feature = "cw32l010", feature = "cw32l011"))]
     sysctrl.ahben.write(SYSCTRL_KEY | (1 << 4));
-    #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031"))]
+    #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
     sysctrl.ahben.modify(|v| v | (1 << 4));
 }
 
@@ -293,7 +296,7 @@ pub fn sysctrl_enable_gpioa(sysctrl: &'static crate::Sysctrl) {
 pub fn sysctrl_enable_gpiob(sysctrl: &'static crate::Sysctrl) {
     #[cfg(any(feature = "cw32l012", feature = "cw32l010", feature = "cw32l011"))]
     sysctrl.ahben.write(SYSCTRL_KEY | (1 << 5));
-    #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031"))]
+    #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
     sysctrl.ahben.modify(|v| v | (1 << 5));
 }
 
@@ -304,12 +307,13 @@ pub fn sysctrl_enable_gpiob(sysctrl: &'static crate::Sysctrl) {
     feature = "cw32f030",
     feature = "cw32l031",
     feature = "cw32l052",
-    feature = "cw32r031"
+    feature = "cw32r031",
+    feature = "cw32w031"
 ))]
 pub fn sysctrl_enable_gpioc(sysctrl: &'static crate::Sysctrl) {
     #[cfg(any(feature = "cw32l012", feature = "cw32l011"))]
     sysctrl.ahben.write(SYSCTRL_KEY | (1 << 6));
-    #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031"))]
+    #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
     sysctrl.ahben.modify(|v| v | (1 << 6));
 }
 
@@ -319,11 +323,12 @@ pub fn sysctrl_enable_gpioc(sysctrl: &'static crate::Sysctrl) {
     feature = "cw32f030",
     feature = "cw32l031",
     feature = "cw32l052",
-    feature = "cw32r031"
+    feature = "cw32r031",
+    feature = "cw32w031"
 ))]
 pub fn sysctrl_enable_gpiof(sysctrl: &'static crate::Sysctrl) {
     #[cfg(feature = "cw32l012")]
     sysctrl.ahben.write(SYSCTRL_KEY | (1 << 7));
-    #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031"))]
+    #[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
     sysctrl.ahben.modify(|v| v | (1 << 9));
 }
