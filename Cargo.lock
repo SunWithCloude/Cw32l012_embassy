@@ -146,6 +146,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cw32l052-pac"
+version = "0.1.0"
+dependencies = [
+ "cortex-m-rt",
+]
+
+[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -200,6 +207,7 @@ dependencies = [
  "cw32l011-pac",
  "cw32l012-pac",
  "cw32l031-pac",
+ "cw32l052-pac",
  "embassy-executor",
  "embassy-futures",
  "embassy-sync",

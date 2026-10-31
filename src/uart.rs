@@ -103,7 +103,7 @@ pub(crate) mod ub {
 
 // 经典组(F030/L031/L052/R031/W031 逐个接入;位面逐 PAC 核对一致:
 // ISR TXE0/TC1/RC2/FE3/PE4,无 NE/ORE;ICR 为 R1W0,已定义位至 bit11)
-#[cfg(any(feature = "cw32f030", feature = "cw32l031"))]
+#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052"))]
 pub(crate) mod ub {
     use crate::pac::uart as raw;
     /// 发送缓冲空(ISR/IER bit0)
@@ -251,7 +251,8 @@ impl Uart {
     #[cfg(any(
         feature = "cw32l010",
         feature = "cw32l011",
-        feature = "cw32l031"
+        feature = "cw32l031",
+        feature = "cw32l052"
     ))]
     pub fn new(
         regs: &'static crate::Uart,
@@ -329,7 +330,7 @@ impl Uart {
             sysctrl.apben1.write(crate::SYSCTRL_KEY | (1 << 3));
         }
         // 经典代单 UART 家族(l031 等):uart1en = APBEN2.9,无 KEY,读改写
-        #[cfg(feature = "cw32l031")]
+        #[cfg(any(feature = "cw32l031", feature = "cw32l052"))]
         {
             assert!(idx == 0, "该家族仅 UART1 实例");
             sysctrl.apben2.modify(|v| v | (1 << 9));
@@ -364,7 +365,8 @@ impl Uart {
         #[cfg(any(
             feature = "cw32l010",
             feature = "cw32l011",
-            feature = "cw32l031"
+            feature = "cw32l031",
+            feature = "cw32l052"
         ))]
         crate::interrupt::nvic_enable::<interrupt::UART1>();
         #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
