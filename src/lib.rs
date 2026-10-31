@@ -86,6 +86,8 @@ pub mod interrupt;
 pub mod rcc;
 pub mod spi;
 pub mod time_driver;
+#[cfg(feature = "cw32l012")]
+pub mod timer;
 pub mod uart;
 
 #[cfg(feature = "cw32f030")]

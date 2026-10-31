@@ -87,3 +87,7 @@ required-features = ["rt", "cw32f030"]
 [[example]]
 name = "adc_async"
 required-features = ["rt", "cw32l012"]
+
+[[example]]
+name = "timer_pwm"
+required-features = ["rt", "cw32l012"]
