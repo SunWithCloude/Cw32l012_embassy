@@ -4,8 +4,9 @@
 //! 时序默认 Mode 0、MSB first、8-bit。
 //!
 //! 家族差异见 [`SpiFamily`]（L012:BR 7 位@CR1[24]、EN@CR2[0]、
-//! SYSCTRL 带 KEY;F030 经典:BR 3 位@CR1[3..5]、EN@CR1[6]、无 KEY、
-//! ICR 同为 R1W0——厂商库 `SPIx->ICR &= ~flag` 实锤）。
+//! SYSCTRL 带 KEY;经典组 F030/F020/F003:BR 3 位@CR1[3..5]、EN@CR1[6]、
+//! 无 KEY、ICR 同为 R1W0——厂商库 `SPIx->ICR &= ~flag` 实锤;F020/F003
+//! 的 CR1 位面与 F030 逐 PAC 比对一致,单实例）。
 
 use core::future::poll_fn;
 use core::task::Poll;
@@ -93,15 +94,17 @@ mod fam {
     }
 }
 
-#[cfg(feature = "cw32f030")]
+// 经典组(F030/F020/F003):CR1 位面逐 PAC 比对一致(cpha=0/cpol=1/mstr=2/
+// br@[3:5]/en=6/lsbf=7/ssm=9),共用一套常量。门控:SPI1/SPI=APBEN2.8,
+// SPI2=APBEN1.6(仅 F030 有第二实例;F020/F003 单实例恒走 idx=0 分支)。
+#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32f003"))]
 mod fam {
-    /// F030 SYSCTRL 的 AHBEN/APBEN 无 KEY 保护(厂商库 |= 直写)
-    /// 门控:SPI1=APBEN2.8、SPI2=APBEN1.6
+    /// 经典组 SYSCTRL 的 AHBEN/APBEN 无 KEY 保护(厂商库 |= 直写)
     pub fn gate(sysctrl: &crate::Sysctrl, idx: usize) {
         match idx {
             0 => sysctrl.apben2.modify(|v| v | (1 << 8)),
             1 => sysctrl.apben1.modify(|v| v | (1 << 6)),
-            _ => unreachable!("F030 无 SPI3"),
+            _ => unreachable!("经典组无 SPI3"),
         }
     }
     /// BR 位域:3 位,在 CR1[3..5]
@@ -161,15 +164,16 @@ impl Default for Config {
 
 /// 实例索引（0/1/2 = SPI1/2/3）
 fn instance_of(regs: &'static crate::Spi) -> usize {
-    // L010/L011 单实例,基址常量名无数字(SPI_BASE)
-    #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+    // 单实例家族:基址常量名无数字(SPI_BASE,f003/l010/l011;f020 为
+    // SPI1_BASE 与多实例家族同名)
+    #[cfg(any(feature = "cw32l010", feature = "cw32l011", feature = "cw32f003"))]
     {
         if regs as *const _ as usize == pac::SPI_BASE {
             return 0;
         }
         unreachable!("非 SPI 寄存器块");
     }
-    #[cfg(not(any(feature = "cw32l010", feature = "cw32l011")))]
+    #[cfg(not(any(feature = "cw32l010", feature = "cw32l011", feature = "cw32f003")))]
     match regs as *const _ as usize {
         pac::SPI1_BASE => 0,
         #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
@@ -190,7 +194,9 @@ pub struct Spi {
 
 impl Spi {
     /// 初始化 SPI 主机（全双工、软件 CS）并配置引脚复用。
-    #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+    // 单实例家族:中断名 f003/l010/l011 为 SPI,f020 为 SPI1(PAC 无 SPI2 外设,
+    // 仅绑定 SPI1 即可)
+    #[cfg(any(feature = "cw32l010", feature = "cw32l011", feature = "cw32f003"))]
     pub fn new(
         regs: &'static crate::Spi,
         sck: Pin<impl GpioPort>,
@@ -198,6 +204,19 @@ impl Spi {
         miso: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::SPI>,
+        config: Config,
+    ) -> Self {
+        Self::new_inner(regs, sck, mosi, miso, af, config)
+    }
+
+    #[cfg(feature = "cw32f020")]
+    pub fn new(
+        regs: &'static crate::Spi,
+        sck: Pin<impl GpioPort>,
+        mosi: Pin<impl GpioPort>,
+        miso: Pin<impl GpioPort>,
+        af: u8,
+        _irqs: impl Binding<interrupt::SPI1>,
         config: Config,
     ) -> Self {
         Self::new_inner(regs, sck, mosi, miso, af, config)
@@ -229,8 +248,8 @@ impl Spi {
         Self::new_inner(regs, sck, mosi, miso, af, config)
     }
 
-    /// 初始化 SPI1（IRQ 绑定收窄到 SPI1；L010/L011 的单实例中断名为 SPI）。
-    #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
+    /// 初始化 SPI1（IRQ 绑定收窄到 SPI1；f020 的单实例中断名也是 SPI1）。
+    #[cfg(any(feature = "cw32l012", feature = "cw32f030", feature = "cw32f020"))]
     pub fn new_spi1(
         regs: &'static crate::Spi,
         sck: Pin<impl GpioPort>,
@@ -314,9 +333,15 @@ impl Spi {
         };
         let lsbf = if config.msb_first { 0 } else { f::CR1_LSBF };
 
-        // 使能 NVIC 中断线(L010/L011 的 SPI 中断名为 SPI,其余为 SPI1)
-        #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+        // 使能 NVIC 中断线(单实例家族的中断名:f003/l010/l011=SPI,
+        // f020=SPI1;多实例家族按 idx 派发)
+        #[cfg(any(feature = "cw32l010", feature = "cw32l011", feature = "cw32f003"))]
         crate::interrupt::nvic_enable::<interrupt::SPI>();
+        #[cfg(feature = "cw32f020")]
+        {
+            assert!(idx == 0, "F020 仅 SPI1 实例");
+            crate::interrupt::nvic_enable::<interrupt::SPI1>();
+        }
         #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
         match idx {
             0 => crate::interrupt::nvic_enable::<interrupt::SPI1>(),
@@ -442,19 +467,20 @@ fn on_irq(idx: usize, regs: &'static crate::Spi) {
     }
 }
 
-/// SPI1 中断标记（IRQ25；L010/L011 的中断名为 SPI）
-#[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+/// SPI1 中断标记（f003/l010/l011 的中断名为 SPI,IRQ25）
+#[cfg(any(feature = "cw32l010", feature = "cw32l011", feature = "cw32f003"))]
 pub struct Spi1Irq;
-#[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+#[cfg(any(feature = "cw32l010", feature = "cw32l011", feature = "cw32f003"))]
 impl IrqHandler<interrupt::SPI> for Spi1Irq {
     fn call() {
         on_irq(0, unsafe { &*(pac::SPI_BASE as *const crate::Spi) });
     }
 }
 
-#[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
+// l012/f030/f020 的 SPI1 中断名带数字(IRQ25)
+#[cfg(any(feature = "cw32l012", feature = "cw32f030", feature = "cw32f020"))]
 pub struct Spi1Irq;
-#[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
+#[cfg(any(feature = "cw32l012", feature = "cw32f030", feature = "cw32f020"))]
 impl IrqHandler<interrupt::SPI1> for Spi1Irq {
     fn call() {
         on_irq(0, unsafe { &*(pac::SPI1_BASE as *const crate::Spi) });

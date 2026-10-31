@@ -1,8 +1,10 @@
 //! GPIO：异步 `Input`（等边沿 / 等电平）与 `Output`。
 //!
 //! 引脚类型 `Pin<P>` 泛型于端口（[`GpioPort`] 特征）：L012 单一 `Gpio`
-//! 端口；F030 经典家族的 GPIOA/B、GPIOC、GPIOF 寄存器集各不相同
-//! （GPIOC 无 AFRL、GPIOF 无 AFRH），特征按各自实际字段实现。
+//! 端口；经典家族的端口结构体分类型——F030/F020 的 GPIOA/B、GPIOC、
+//! GPIOF 寄存器集各不相同（GPIOC 无 AFRL、GPIOF 无 AFRH），特征按各自
+//! 实际字段实现；F003 的 GPIO(A/B)与 GPIOC 都**只有 AFRL**（手册
+//! CW32F003 UM Rev2.3 §8.6.5 寄存器列表无 AFRH——高脚无复用能力）。
 //!
 //! CW32 每端口共享一个中断，等待期间注册 per-pin waker，端口中断里
 //! 按位唤醒（软件触发位图防丢唤醒）。
@@ -224,13 +226,17 @@ impl GpioPort for pac::GPIO {
     }
 }
 
-#[cfg(feature = "cw32f030")]
+// 经典组(F030/F020):GPIO 类型覆盖 A/B 两端口(同结构体类型),
+// GPIOC 仅 AFRH、GPIOF 仅 AFRL——f030/f020 两家族结构体逐 PAC 比对同款。
+// 端口 B 基址用 A+0x400 步进(f030 有 GPIOB_BASE 常量而 f020 无,统一走
+// 步进;两家族 B 同在 0x4800_0400)。
+#[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
 impl GpioPort for pac::GPIO {
     impl_port!(
         pac::GPIO,
         |s: &Self| match s as *const _ as usize {
             pac::GPIOA_BASE => 0,
-            pac::GPIOB_BASE => 1,
+            a if a == pac::GPIOA_BASE + 0x400 => 1,
             _ => unreachable!("GPIO 基地址不在 A/B"),
         },
         isr,
@@ -243,7 +249,7 @@ impl GpioPort for pac::GPIO {
     }
 }
 
-#[cfg(feature = "cw32f030")]
+#[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
 impl GpioPort for pac::GPIOC {
     impl_port!(pac::GPIOC, |_s: &Self| 2, isr, icr, idr, brr);
     fn set_af(&self, pin: u8, af: u8) {
@@ -252,11 +258,43 @@ impl GpioPort for pac::GPIOC {
     }
 }
 
-#[cfg(feature = "cw32f030")]
+#[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
 impl GpioPort for pac::GPIOF {
     impl_port!(pac::GPIOF, |_s: &Self| 3, isr, icr, idr, brr);
     fn set_af(&self, pin: u8, af: u8) {
         assert!(pin < 8, "GPIOF 高脚无复用功能");
+        set_af_impl(Some(&self.afrl), None, pin, af)
+    }
+}
+
+// F003:GPIO(A/B)与 GPIOC 两种结构体,**两类型都只有 AFRL 无 AFRH**
+// (手册 UM Rev2.3 §8.6.5 寄存器列表仅 GPIOx_AFRL,x=A,B,C——所有高脚
+// 无复用能力,与 f030 的 GPIOC-only-AFRH 相反);均有 PDR 下拉寄存器。
+#[cfg(feature = "cw32f003")]
+impl GpioPort for pac::GPIO {
+    impl_port!(
+        pac::GPIO,
+        |s: &Self| match s as *const _ as usize {
+            pac::GPIOA_BASE => 0,
+            a if a == pac::GPIOA_BASE + 0x400 => 1,
+            _ => unreachable!("GPIO 基地址不在 A/B"),
+        },
+        isr,
+        icr,
+        idr,
+        brr
+    );
+    fn set_af(&self, pin: u8, af: u8) {
+        assert!(pin < 8, "F003 GPIO 无 AFRH(高脚无复用功能)");
+        set_af_impl(Some(&self.afrl), None, pin, af)
+    }
+}
+
+#[cfg(feature = "cw32f003")]
+impl GpioPort for pac::GPIOC {
+    impl_port!(pac::GPIOC, |_s: &Self| 2, isr, icr, idr, brr);
+    fn set_af(&self, pin: u8, af: u8) {
+        assert!(pin < 8, "F003 GPIOC 无 AFRH(高脚无复用功能)");
         set_af_impl(Some(&self.afrl), None, pin, af)
     }
 }
@@ -529,16 +567,26 @@ impl<P: GpioPort> Input<P> {
         let port = self.pin.port;
         let bank = port.bank();
         // 使能 NVIC 中断线（按槽位;端口存在性随家族不同:
-        // GPIOC 仅 L011/L012/F030,GPIOF 仅 L012/F030——L010/L011
-        // 的槽位 2/3 无对应中断,never 分支防误用）
+        // GPIOC 除 L010 外均有;GPIOF 仅 L012/F030/F020——
+        // 其余家族的槽位无对应中断,never 分支防误用）
         match bank {
             0 => crate::interrupt::nvic_enable::<interrupt::GPIOA>(),
             1 => crate::interrupt::nvic_enable::<interrupt::GPIOB>(),
-            #[cfg(any(feature = "cw32l011", feature = "cw32l012", feature = "cw32f030"))]
+            #[cfg(any(
+                feature = "cw32l011",
+                feature = "cw32l012",
+                feature = "cw32f030",
+                feature = "cw32f020",
+                feature = "cw32f003"
+            ))]
             2 => crate::interrupt::nvic_enable::<interrupt::GPIOC>(),
-            #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
+            #[cfg(any(feature = "cw32l012", feature = "cw32f030", feature = "cw32f020"))]
             _ => crate::interrupt::nvic_enable::<interrupt::GPIOF>(),
-            #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+            #[cfg(any(
+                feature = "cw32l010",
+                feature = "cw32l011",
+                feature = "cw32f003"
+            ))]
             _ => unreachable!("该家族无此端口"),
         }
         critical_section::with(|_| {
@@ -627,14 +675,25 @@ port_irq!(GPIOC, GpioCIrq, pac::Gpio, pac::GPIOC_BASE, 2);
 #[cfg(feature = "cw32l012")]
 port_irq!(GPIOF, GpioFIrq, pac::Gpio, pac::GPIOF_BASE, 3);
 
-#[cfg(feature = "cw32f030")]
+// 经典组 f030/f020:GPIO 覆盖 A/B(步进 0x400,见上方 impl 注释)、
+// GPIOC/GPIOF 独立类型;GPIOF 仅 f030/f020 有(f020 IRQ8/f030 同号位)
+#[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
 port_irq!(GPIOA, GpioAIrq, pac::GPIO, pac::GPIOA_BASE, 0);
-#[cfg(feature = "cw32f030")]
-port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOB_BASE, 1);
-#[cfg(feature = "cw32f030")]
+#[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
+port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOA_BASE + 0x400, 1);
+#[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
 port_irq!(GPIOC, GpioCIrq, pac::GPIOC, pac::GPIOC_BASE, 2);
-#[cfg(feature = "cw32f030")]
+#[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
 port_irq!(GPIOF, GpioFIrq, pac::GPIOF, pac::GPIOF_BASE, 3);
+
+// F003:GPIO 覆盖 A/B,GPIOC 独立类型;无 GPIOF(中断槽位与 AHBEN 位
+// 均不存在——手册 UM Rev2.3 存储器映射亦无 GPIOF)
+#[cfg(feature = "cw32f003")]
+port_irq!(GPIOA, GpioAIrq, pac::GPIO, pac::GPIOA_BASE, 0);
+#[cfg(feature = "cw32f003")]
+port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOA_BASE + 0x400, 1);
+#[cfg(feature = "cw32f003")]
+port_irq!(GPIOC, GpioCIrq, pac::GPIOC, pac::GPIOC_BASE, 2);
 
 // L012 代生成家族:单一 GPIO 类型,基址步进 0x400;
 // GPIOC 仅 L011 有,L010/L011 均无 GPIOF

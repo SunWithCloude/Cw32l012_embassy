@@ -3,9 +3,9 @@ name = "embassy-cw32"
 version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
-description = "embassy async HAL for CW32 Cortex-M0+ MCUs (Wuhan Xinyuan / CMSemicon): CW32L012/L010/L011 and CW32F030/A030"
+description = "embassy async HAL for CW32 Cortex-M0+ MCUs (Wuhan Xinyuan / CMSemicon): CW32L012/L010/L011 and CW32F030/F020/F003"
 categories = ["embedded", "hardware-support", "no-std", "async"]
-keywords = ["cw32", "cw32l012", "cw32l010", "cw32l011", "cw32f030", "embassy", "async"]
+keywords = ["cw32", "cw32l012", "cw32l010", "cw32l011", "cw32f030", "cw32f020", "cw32f003", "embassy", "async"]
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/SunWithCloude/Cw32l012_embassy"
@@ -20,6 +20,8 @@ features = ["cw32l012"]
 # cw32-pacs 统一仓的生成版(同一份生成器产物)
 cw32l012-pac = { path = "../cw32l012-pac", version = "0.2", default-features = false, optional = true }
 cw32f030-pac = { path = "../cw32-pacs/crates/cw32f030-pac", optional = true }
+cw32f020-pac = { path = "../cw32-pacs/crates/cw32f020-pac", optional = true }
+cw32f003-pac = { path = "../cw32-pacs/crates/cw32f003-pac", optional = true }
 cw32l010-pac = { path = "../cw32-pacs/crates/cw32l010-pac", optional = true }
 cw32l011-pac = { path = "../cw32-pacs/crates/cw32l011-pac", optional = true }
 critical-section = { version = "1.2", features = ["restore-state-u8"] }
@@ -41,14 +43,23 @@ default = ["critical-section-impl", "cw32l012"]
 # 或 cortex-m 的实现同时启用（链接冲突）。
 critical-section-impl = []
 # 家族选择(互斥):cw32l012/cw32l010/cw32l011 = L012 代外设(KEY 写保护 +
-# UART 错误位 8..11 + APBEN1 布局);cw32f030 = 经典代(无 KEY + 错误位
-# 3/4 + APBEN2 布局,CW32F030/CW32A030 寄存器兼容)
+# UART 错误位 8..11 + APBEN1 布局);cw32f030/cw32f020/cw32f003 = 经典代
+# (无 KEY + 错误位 3/4 + APBEN2 布局,F030 与 CW32A030 寄存器兼容)
 cw32l012 = ["dep:cw32l012-pac"]
 cw32l010 = ["dep:cw32l010-pac"]
 cw32l011 = ["dep:cw32l011-pac"]
 cw32f030 = ["dep:cw32f030-pac"]
+cw32f020 = ["dep:cw32f020-pac"]
+cw32f003 = ["dep:cw32f003-pac"]
 # 透传所选家族 PAC 的 rt feature(cortex-m-rt 向量表)
-rt = ["cw32l012-pac?/rt", "cw32l010-pac?/rt", "cw32l011-pac?/rt", "cw32f030-pac?/rt"]
+rt = [
+    "cw32l012-pac?/rt",
+    "cw32l010-pac?/rt",
+    "cw32l011-pac?/rt",
+    "cw32f030-pac?/rt",
+    "cw32f020-pac?/rt",
+    "cw32f003-pac?/rt",
+]
 
 # 示例依赖仅对 ARM 裸机目标启用（宿主机 cargo test 不拉取，
 # 否则 cortex-m 平台代码在 x86 上编译失败）
