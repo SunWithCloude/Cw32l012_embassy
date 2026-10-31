@@ -3,9 +3,9 @@ name = "embassy-cw32"
 version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
-description = "embassy async HAL for CW32 Cortex-M0+ MCUs (Wuhan Xinyuan / CMSemicon): L012/L010/L011 and the classic F003/F020/F030(A030)/L031/L052/R031/W031 families"
+description = "embassy async HAL for CW32 Cortex-M0+ MCUs (Wuhan Xinyuan / CMSemicon): L012/L010/L011 and the classic F003/F020/F030(A030)/L031/L052/L083/R031/W031 families"
 categories = ["embedded", "hardware-support", "no-std", "async"]
-keywords = ["cw32", "cw32l012", "cw32l010", "cw32l011", "cw32f030", "cw32f020", "cw32f003", "embassy", "async"]
+keywords = ["cw32", "cw32l012", "cw32l010", "cw32l011", "cw32f030", "cw32f020", "cw32f003", "cw32l083", "embassy", "async"]
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/SunWithCloude/Cw32l012_embassy"
@@ -28,6 +28,7 @@ cw32l031-pac = { path = "../cw32-pacs/crates/cw32l031-pac", optional = true }
 cw32l052-pac = { path = "../cw32-pacs/crates/cw32l052-pac", optional = true }
 cw32r031-pac = { path = "../cw32-pacs/crates/cw32r031-pac", optional = true }
 cw32w031-pac = { path = "../cw32-pacs/crates/cw32w031-pac", optional = true }
+cw32l083-pac = { path = "../cw32-pacs/crates/cw32l083-pac", optional = true }
 critical-section = { version = "1.2", features = ["restore-state-u8"] }
 embassy-sync = "0.8"
 embassy-time = "0.5"
@@ -48,8 +49,9 @@ default = ["critical-section-impl", "cw32l012"]
 critical-section-impl = []
 # 家族选择(互斥):cw32l012/cw32l010/cw32l011 = L012 代外设(KEY 写保护 +
 # UART 错误位 8..11 + APBEN1 布局);cw32f030/cw32f020/cw32f003/cw32l031/
-# cw32l052/cw32r031/cw32w031 = 经典代(无 KEY + 错误位 3/4 + APBEN2 的
-# UART1/SPI1 布局,寄存器面与 CW32F030 同源,F030 与 CW32A030 兼容)
+# cw32l052/cw32l083/cw32r031/cw32w031 = 经典代(无 KEY + 错误位 3/4 +
+# APBEN2 的 UART1/SPI1 布局,寄存器面与 CW32F030 同源,F030 与 CW32A030
+# 兼容)
 cw32l012 = ["dep:cw32l012-pac"]
 cw32l010 = ["dep:cw32l010-pac"]
 cw32l011 = ["dep:cw32l011-pac"]
@@ -60,6 +62,7 @@ cw32l031 = ["dep:cw32l031-pac"]
 cw32l052 = ["dep:cw32l052-pac"]
 cw32r031 = ["dep:cw32r031-pac"]
 cw32w031 = ["dep:cw32w031-pac"]
+cw32l083 = ["dep:cw32l083-pac"]
 # 透传所选家族 PAC 的 rt feature(cortex-m-rt 向量表)
 rt = [
     "cw32l012-pac?/rt",
@@ -68,6 +71,7 @@ rt = [
     "cw32f030-pac?/rt",
     "cw32l031-pac?/rt",
     "cw32l052-pac?/rt",
+    "cw32l083-pac?/rt",
     "cw32r031-pac?/rt",
     "cw32w031-pac?/rt",
     "cw32f020-pac?/rt",

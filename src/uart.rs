@@ -102,9 +102,11 @@ pub(crate) mod ub {
     }
 }
 
-// 经典组(F030/F020/F003/L031/L052/R031/W031 逐个接入;位面逐 PAC 核对一致:
-// ISR TXE0/TC1/RC2/FE3/PE4,无 NE/ORE;ICR 为 R1W0,已定义位至 bit11)
-#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031", feature = "cw32f020", feature = "cw32f003"))]
+// 经典组(F030/F020/F003/L031/L052/L083/R031/W031 逐个接入;位面逐 PAC 核对
+// 一致:ISR TXE0/TC1/RC2/FE3/PE4,无 NE/ORE;ICR 为 R1W0,已定义位至 bit11——
+// l083 例外:ICR 已定义位仅至 bit6(CTS),ICR_NONE 多写的 1 落在保留位
+// (R1W0 无动作),CTS 清零无副作用——驱动不用硬件流控)
+#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031", feature = "cw32f020", feature = "cw32f003"))]
 pub(crate) mod ub {
     use crate::pac::uart as raw;
     /// 发送缓冲空(ISR/IER bit0)
@@ -273,13 +275,42 @@ impl Uart {
         Self::new_inner(regs, tx, rx, af, config)
     }
 
+    /// 初始化 UART1（l083 入口；硬件有 UART1..UART6，但 PAC 只收编
+    /// UART1 寄存器块；中断与 UART4 共享向量，typelevel 名为
+    /// `UART1_UART4`（IRQ27）——`bind_interrupts!` 须写 `UART1_UART4`）。
+    #[cfg(feature = "cw32l083")]
+    pub fn new(
+        regs: &'static crate::Uart,
+        tx: Pin<impl GpioPort>,
+        rx: Pin<impl GpioPort>,
+        af: u8,
+        _irqs: impl Binding<interrupt::UART1_UART4>,
+        config: Config,
+    ) -> Self {
+        Self::new_inner(regs, tx, rx, af, config)
+    }
+
     /// 初始化 UART1（IRQ 绑定类型收窄到 UART1）。
+    #[cfg(not(feature = "cw32l083"))]
     pub fn new_uart1(
         regs: &'static crate::Uart,
         tx: Pin<impl GpioPort>,
         rx: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::UART1>,
+        config: Config,
+    ) -> Self {
+        Self::new_inner(regs, tx, rx, af, config)
+    }
+
+    /// 初始化 UART1（l083：IRQ 绑定类型为共享向量 UART1_UART4）。
+    #[cfg(feature = "cw32l083")]
+    pub fn new_uart1(
+        regs: &'static crate::Uart,
+        tx: Pin<impl GpioPort>,
+        rx: Pin<impl GpioPort>,
+        af: u8,
+        _irqs: impl Binding<interrupt::UART1_UART4>,
         config: Config,
     ) -> Self {
         Self::new_inner(regs, tx, rx, af, config)
@@ -340,7 +371,7 @@ impl Uart {
             sysctrl.apben1.write(crate::SYSCTRL_KEY | (1 << 3));
         }
         // 经典代单 UART 家族(l031 等):uart1en = APBEN2.9,无 KEY,读改写
-        #[cfg(any(feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
+        #[cfg(any(feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
         {
             assert!(idx == 0, "该家族仅 UART1 实例");
             sysctrl.apben2.modify(|v| v | (1 << 9));
@@ -381,6 +412,9 @@ impl Uart {
             feature = "cw32f003"
         ))]
         crate::interrupt::nvic_enable::<interrupt::UART1>();
+        // l083 的 UART1 向量符号为共享命名 UART1_UART4
+        #[cfg(feature = "cw32l083")]
+        crate::interrupt::nvic_enable::<interrupt::UART1_UART4>();
         #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
         match idx {
             0 => crate::interrupt::nvic_enable::<interrupt::UART1>(),
@@ -596,12 +630,27 @@ pub struct BufferedUartRx {
 
 impl BufferedUart {
     /// 初始化 UART1 缓冲式驱动（8-N-1）。
+    #[cfg(not(feature = "cw32l083"))]
     pub fn new_uart1(
         regs: &'static crate::Uart,
         tx: Pin<impl GpioPort>,
         rx: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::UART1>,
+        config: Config,
+    ) -> Self {
+        let _ = Uart::new_inner(regs, tx, rx, af, config);
+        Self::finish(regs, 0)
+    }
+
+    /// 初始化 UART1 缓冲式驱动（8-N-1；l083：绑定共享向量 UART1_UART4）。
+    #[cfg(feature = "cw32l083")]
+    pub fn new_uart1(
+        regs: &'static crate::Uart,
+        tx: Pin<impl GpioPort>,
+        rx: Pin<impl GpioPort>,
+        af: u8,
+        _irqs: impl Binding<interrupt::UART1_UART4>,
         config: Config,
     ) -> Self {
         let _ = Uart::new_inner(regs, tx, rx, af, config);
@@ -857,8 +906,20 @@ fn on_irq(idx: usize, regs: &'static crate::Uart) {
 }
 
 /// UART1 中断标记（IRQ27）
+#[cfg(not(feature = "cw32l083"))]
 pub struct Uart1Irq;
+#[cfg(not(feature = "cw32l083"))]
 impl IrqHandler<interrupt::UART1> for Uart1Irq {
+    fn call() {
+        on_irq(0, unsafe { &*(pac::UART1_BASE as *const crate::Uart) });
+    }
+}
+
+/// UART1 中断标记（l083：与 UART4 共享向量 IRQ27，符号 UART1_UART4）
+#[cfg(feature = "cw32l083")]
+pub struct Uart1Irq;
+#[cfg(feature = "cw32l083")]
+impl IrqHandler<interrupt::UART1_UART4> for Uart1Irq {
     fn call() {
         on_irq(0, unsafe { &*(pac::UART1_BASE as *const crate::Uart) });
     }

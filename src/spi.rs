@@ -97,7 +97,7 @@ mod fam {
 // 经典组(F030/F020/F003/L031/L052/R031/W031 逐个接入):SPI1 位面与 F030
 // 完全相同(逐 PAC 核对:EN@CR1[6]、BR 3 位@CR1[5:3]、MSTR2/CPOL1/CPHA0/
 // LSBF7/SSM9),单实例 SPI1=APBEN2.8;F003 的中断/基址名无数字(SPI/SPI_BASE)
-#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031", feature = "cw32f020", feature = "cw32f003"))]
+#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031", feature = "cw32f020", feature = "cw32f003", feature = "cw32l083"))]
 mod fam {
     /// 经典组 SYSCTRL 的 AHBEN/APBEN 无 KEY 保护(厂商库 |= 直写)
     pub fn gate(sysctrl: &crate::Sysctrl, idx: usize) {
@@ -236,7 +236,8 @@ impl Spi {
     }
 
     /// 经典代单 SPI 家族(l031 等)入口:中断名 SPI1,单实例
-    #[cfg(any(feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031"))]
+    /// （l083 硬件有 SPI1/SPI2,但 PAC 只收编 SPI1 寄存器块）
+    #[cfg(any(feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
     pub fn new(
         regs: &'static crate::Spi,
         sck: Pin<impl GpioPort>,
@@ -268,6 +269,7 @@ impl Spi {
         feature = "cw32f030",
         feature = "cw32l031",
         feature = "cw32l052",
+        feature = "cw32l083",
         feature = "cw32r031",
         feature = "cw32w031",
         feature = "cw32f020"
@@ -359,7 +361,7 @@ impl Spi {
         // f020=SPI1;多实例家族按 idx 派发)
         #[cfg(any(feature = "cw32l010", feature = "cw32l011", feature = "cw32f003"))]
         crate::interrupt::nvic_enable::<interrupt::SPI>();
-        #[cfg(any(feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031", feature = "cw32f020"))]
+        #[cfg(any(feature = "cw32l031", feature = "cw32l052", feature = "cw32r031", feature = "cw32w031", feature = "cw32f020", feature = "cw32l083"))]
         crate::interrupt::nvic_enable::<interrupt::SPI1>();
         #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
         match idx {
@@ -501,6 +503,7 @@ impl IrqHandler<interrupt::SPI> for Spi1Irq {
     feature = "cw32f030",
     feature = "cw32l031",
     feature = "cw32l052",
+    feature = "cw32l083",
     feature = "cw32r031",
     feature = "cw32w031",
     feature = "cw32f020"
@@ -511,6 +514,7 @@ pub struct Spi1Irq;
     feature = "cw32f030",
     feature = "cw32l031",
     feature = "cw32l052",
+    feature = "cw32l083",
     feature = "cw32r031",
     feature = "cw32w031",
     feature = "cw32f020"
