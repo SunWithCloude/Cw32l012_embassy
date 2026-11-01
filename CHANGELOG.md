@@ -2,7 +2,36 @@
 
 遵循 SemVer；格式参考 Keep a Changelog。
 
-## [0.3.0] - 2026-10-24
+## [未发布]（0.4.0 增量，随 DMA/RTC 收尾定档）
+
+### 新增
+
+- **家族矩阵扩至 11 个**：`cw32l010`/`cw32l011`（L012 代组，KEY 写保护 +
+  UART 错误位 8..11 + APBEN1 布局）与 `cw32l031`/`cw32l052`/`cw32l083`/
+  `cw32r031`/`cw32w031`/`cw32f020`/`cw32f003`（经典代，无 KEY + 错误位
+  3/4 + APBEN2 布局）。家族差异逐 PAC 核对，复位默认时钟以各家族数据
+  手册原文为准（L010/L011/L012=4MHz，其余=8MHz——L031 Rev1.8 p14 等原文
+  纠正了此前按 4MHz 的归类）。CI 增设 11 家族互斥矩阵 job。
+- `timer` 模块（L012 先行）：GTIM1-4 单通道边沿对齐 PWM（`SetDutyCycle`，
+  万分比满量程）+ `wait_update()` 异步等更新事件；寄存器配方与阻塞版
+  `cw32l012-hal` 的 `gtim.rs` 逐行同源（实机验证过）。发现手写 PAC 的
+  GTIM 块漏建模 ICR（§16.10.6，BASE+0x70，R1W0）——以基地址偏移访问
+  绕过，PAC 侧待补。
+- `adc` 模块（L012 先行）：异步单次/序列转换（EOC/EOS 中断驱动，10ms
+  软超时）、内部通道（1.2V BGR → `vdda_mv()`、温度传感器 →
+  `temperature_mc()` 含 SensorDead 失效保护——该板 TS 硬件无输出的
+  实测结论收敛进错误路径）。`Pin::into_analog()` 新增。
+- `rtt_hello` 示例：defmt-rtt + panic-probe，`_defmt_timestamp` 以
+  embassy-time uptime 毫秒手写（不引额外 crate）。
+- F003 的 I2C（经典状态机同构，中断名 `I2C` 无数字）、l083 的共享向量
+  命名（GPIOC_GPIOD / GPIOE_GPIOF / UART1_UART4 等）接入。
+
+### 变更
+
+- 门控写规范：经典组 AH BEN/APBEN 无 KEY（modify 读改写）；L012 代组
+  KEY 写。以 cw32-hal2 各家族 clock sidecar 的 `enable_write_key` 元数据
+  与 F030 上板实测交叉验证。
+
 
 ### 新增
 
