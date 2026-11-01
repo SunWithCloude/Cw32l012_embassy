@@ -56,6 +56,19 @@
 - `defmt` feature：全驱动错误/配置类型（30+）`Format` derive，CI 增设
   defmt-on job。
 
+- **经典组 DMA**（`ClassicDma`，f020/f030/l031/l052/l083/r031/w031）：与
+  L012 不同的 IP——每通道独立寄存器块（@0x20 步进）、ISR/ICR 每通道
+  4bit 打包、无 remaining 回读。通道数 f030/f020/l083=5、l031 组=4、
+  f003/l010/l011 无 DMA。中断分组 DMACH1(9)/DMACH23(10)/DMACH45(11)
+  （l031 组 DMACH4、f020 的 IRQ11 保留→通道 4/5 仅轮询）。触发源表
+  全家族就绪（各家手册 §8.8.4，cw32-hal2 cw32-data/dma 数据）。门控
+  **AHBEN bit0**（纠正了任务面的 APBEN1 误判）。
+- **经典组 ADC**（f030/f020 归组）：与 L012 完全不同的 IP——cr0/cr1/
+  sqr 4 结果架构。EOC/EOS 异步、软件触发先行、**内部通道实锤存在**
+  （VDDA/3、温度、Vref1.2 + 出厂校准字——纠正了"经典组无内部通道"的
+  先前结论，按 sha 锁定的厂商库 V2.2 配方实现）。l031 组/f003/l010/
+  l011 的 ADC 为另外的 IP，排除待后续。
+
 ### 变更
 
 - 门控写规范：经典组 AH BEN/APBEN 无 KEY（modify 读改写）；L012 代组
