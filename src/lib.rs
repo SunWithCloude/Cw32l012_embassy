@@ -100,6 +100,18 @@ pub mod adc;
 pub mod dac;
 #[cfg(feature = "cw32l012")]
 pub mod dma;
+// 经典组 DMA（另一套 IP：每通道独立 0x20 步进块 + ISR 4bit 打包 + 无 CCNT
+// 回读；f030/f020/l083 5 通道、l031 组 4 通道。F003/L010/L011 无 DMA 硬件）
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
+pub mod dma;
 pub mod gpio;
 // I2C 覆盖 L012/F030/F020/F003/L010(经典组同构 8051 状态机外设,编译级
 // 接入;L011 无 I2C 硬件)
