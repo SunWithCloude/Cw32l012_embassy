@@ -4,12 +4,16 @@
 
 [English](README.md) | **简体中文**
 
-武汉芯源半导体（CMSemicon）**CW32L012**（Cortex-M0+）的 embassy 异步 HAL。
+武汉芯源半导体（CMSemicon）**CW32 系列**（Cortex-M0+，**11 个家族**）的 embassy 异步 HAL：
+CW32L012（默认，feature `cw32l012`）、CW32L010/L011、CW32L031/L052/L083/R031/W031、
+CW32F003/F020/F030(A030)。
 
-基于 [cw32l012-pac](https://github.com/SunWithCloude/Cw32l012_pac)（寄存器数据转录自
-《CW32L012 用户手册》V1.4，与 cw32l012-hal 同源）。
+寄存器层：[cw32l012-pac](https://github.com/SunWithCloude/Cw32l012_pac)（L012，寄存器数据
+转录自《CW32L012 用户手册》V1.4，与 cw32l012-hal 同源）与
+[cw32-pacs](https://github.com/SunWithCloude/cw32-pacs)（其余 10 家族，由厂商 SDK 头文件生成）。
+全部家族的通用 BSP 见 [cw32-bsp](https://github.com/SunWithCloude/cw32-bsp)。
 
-## 提供内容（v0.2）
+## 提供内容
 
 | 模块 | 内容 |
 |------|------|

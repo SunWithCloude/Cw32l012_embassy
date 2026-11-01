@@ -4,12 +4,11 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-Multi-family embassy async HAL for Wuhan Xinyuan (CMSemicon) **CW32** Cortex-M0+ MCUs — **CW32L012** (default) and **CW32F030/A030** (feature `cw32f030`);
-Semiconductor (CMSemicon), built on
-[cw32l012-pac](https://github.com/SunWithCloude/Cw32l012_pac) — a register layer
-transcribed from the vendor's *CW32L012 User Manual* V1.4.
+Multi-family embassy async HAL for Wuhan Xinyuan (CMSemicon) **CW32** Cortex-M0+ MCUs — **11 families**: CW32L012 (default, feature `cw32l012`), CW32L010/L011, CW32L031/L052/L083/R031/W031, and CW32F003/F020/F030(A030).
 
-## What you get (v0.2)
+Register layers: [cw32l012-pac](https://github.com/SunWithCloude/Cw32l012_pac) (L012, transcribed from the vendor's *CW32L012 User Manual* V1.4) and [cw32-pacs](https://github.com/SunWithCloude/cw32-pacs) (the other 10 families, generated from the vendor SDK headers). Generic BSPs for all families live in [cw32-bsp](https://github.com/SunWithCloude/cw32-bsp).
+
+## What you get
 
 | Module | Contents |
 |--------|----------|

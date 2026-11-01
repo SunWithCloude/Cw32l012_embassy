@@ -44,6 +44,33 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all -- --check
 
+  # 11 家族互斥 feature 各自编译(经典组 PAC 来自 cw32-pacs sibling)
+  family-matrix:
+    name: family / ${{ matrix.family }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        family: [cw32l012, cw32l010, cw32l011, cw32f030, cw32l031, cw32l052, cw32l083, cw32r031, cw32w031, cw32f020, cw32f003]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout sibling path dependencies
+        run: |
+          git clone --depth 1 https://github.com/SunWithCloude/Cw32l012_pac.git "$GITHUB_WORKSPACE/../cw32l012-pac"
+          git clone --depth 1 https://github.com/SunWithCloude/cw32-pacs.git "$GITHUB_WORKSPACE/../cw32-pacs"
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv6m-none-eabi
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: check (${{ matrix.family }})
+        run: cargo check --target $TARGET --no-default-features --features "critical-section-impl,${{ matrix.family }}"
+
+
   docs:
     name: docs
     runs-on: ubuntu-latest
