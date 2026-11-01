@@ -83,6 +83,10 @@ rt = [
 [target.'cfg(all(target_arch = "arm", target_os = "none"))'.dev-dependencies]
 embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
 cortex-m-rt = { version = "0.7", features = ["device"] }
+# rtt_hello 示例:RTT 日志(probe-rs 原生可读,省 UART 引脚)
+defmt = "1"
+defmt-rtt = "0.4"
+panic-probe = { version = "0.3", features = ["print-defmt"] }
 
 [[example]]
 name = "blink_async"
@@ -118,4 +122,8 @@ required-features = ["rt", "cw32l012"]
 
 [[example]]
 name = "timer_pwm"
+required-features = ["rt", "cw32l012"]
+
+[[example]]
+name = "rtt_hello"
 required-features = ["rt", "cw32l012"]
