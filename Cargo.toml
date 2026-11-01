@@ -155,3 +155,11 @@ required-features = ["rt", "cw32l012"]
 [[example]]
 name = "spi_dma"
 required-features = ["rt", "cw32l012"]
+
+[[example]]
+name = "dac_wave"
+required-features = ["rt", "cw32l012"]
+
+[[example]]
+name = "dac_adc_loop"
+required-features = ["rt", "cw32l012"]

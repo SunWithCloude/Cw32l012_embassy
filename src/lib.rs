@@ -97,6 +97,8 @@ compile_error!("必须启用一个家族 feature:cw32l012 / cw32l010 / cw32l011 
 #[cfg(feature = "cw32l012")]
 pub mod adc;
 #[cfg(feature = "cw32l012")]
+pub mod dac;
+#[cfg(feature = "cw32l012")]
 pub mod dma;
 pub mod gpio;
 // I2C 覆盖 L012/F030/F020/F003/L010(经典组同构 8051 状态机外设,编译级
