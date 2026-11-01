@@ -135,3 +135,11 @@ required-features = ["rt", "cw32l012"]
 [[example]]
 name = "adc_dma"
 required-features = ["rt", "cw32l012"]
+
+[[example]]
+name = "rtc_alarm"
+required-features = ["rt", "cw32l012"]
+
+[[example]]
+name = "wdt_demo"
+required-features = ["rt", "cw32l012"]

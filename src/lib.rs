@@ -95,11 +95,15 @@ pub mod i2c;
 pub mod interrupt;
 #[cfg(feature = "cw32f030")]
 pub mod rcc;
+#[cfg(feature = "cw32l012")]
+pub mod rtc;
 pub mod spi;
 pub mod time_driver;
 #[cfg(feature = "cw32l012")]
 pub mod timer;
 pub mod uart;
+#[cfg(feature = "cw32l012")]
+pub mod wdt;
 
 #[cfg(feature = "cw32f030")]
 pub use cw32f030_pac as pac;
