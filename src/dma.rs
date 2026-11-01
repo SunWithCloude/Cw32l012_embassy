@@ -733,6 +733,7 @@ static CLASSIC_WAKERS: [AtomicWaker; 8] = [const { AtomicWaker::new() }; 8];
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ClassicWidth {
     B8 = 0,
     B16 = 1,
@@ -768,6 +769,7 @@ impl ClassicWidth {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ClassicMode {
     /// 块传输：每搬完一个数据块插入传输间隙，允许 CPU / 高优先级通道抢占
     Block,
@@ -779,6 +781,7 @@ pub enum ClassicMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ClassicTrigger {
     /// 软件触发：由 [`Channel::start`] 写 `SOFTSRC` 启动
     Software,
@@ -928,6 +931,7 @@ pub mod hs {
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ClassicConfig {
     /// 源地址
     pub src: u32,
@@ -1051,6 +1055,7 @@ impl ClassicConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DmaErrorClassic {
     /// 通道号非法
     BadChannel,
