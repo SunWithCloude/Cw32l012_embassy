@@ -46,7 +46,9 @@ jobs:
         run: cargo test
 
       - name: rustfmt
-        run: cargo fmt --all -- --check
+        # -p 限定只查本包：`--all` 会把 path 依赖（cw32-pacs 生成代码）
+        # 也卷进检查，而那是上游 PAC 仓的事
+        run: cargo fmt -p embassy-cw32 -- --check
 
   # 11 家族互斥 feature 各自编译(经典组 PAC 来自 cw32-pacs sibling)
   family-matrix:
