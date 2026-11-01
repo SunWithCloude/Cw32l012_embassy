@@ -113,6 +113,7 @@ const DOR_DMAUDR2: u32 = 1 << 15;
 
 /// DAC 通道
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DacChannel {
     /// 通道 1（PA4/DAC_OUT1，内部互联 ADC1_IN13）
     Ch1,
@@ -189,6 +190,7 @@ impl DacChannel {
 /// DAC 触发源（CR0.TSELx，§26.6 表 26-1；ETR 变体 1010..1111 经 [`Dac::regs`]
 /// 原始配置，本枚举不含）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DacTrig {
     /// 软件触发（写 SWTRGR；⚠ 未实机验证 SWTRIG→DMA 请求路径，见模块文档）
     Software,
@@ -232,6 +234,7 @@ impl DacTrig {
 
 /// DAC 错误
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DacError {
     /// 12 位值域越界（>0xFFF）
     ValueOutOfRange,

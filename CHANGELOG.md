@@ -48,6 +48,14 @@
   补一行），默认关闭、关闭时零开销；`rtt_hello` 示例（defmt-rtt +
   panic-probe）形成端到端日志链路。
 
+- `dac` 模块（L012 先行）：双通道 12 位（`set_ch1/ch2/both` + 回读）、
+  DMA 波形输出（`write_dma`/`start_dma_loop` 环形循环——GTIM TRGO 供拍 +
+  `hs::DACx` 请求线，§26.6-26.8 语义逐条标注实机/推断状态）、DAC→ADC
+  内部通道闭环示例（阻塞版实机例程的 embassy 版）。门控在 APBEN2[10]
+  （纠正了任务面的 APBEN1 笔误）。
+- `defmt` feature：全驱动错误/配置类型（30+）`Format` derive，CI 增设
+  defmt-on job。
+
 ### 变更
 
 - 门控写规范：经典组 AH BEN/APBEN 无 KEY（modify 读改写）；L012 代组

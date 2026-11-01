@@ -71,6 +71,22 @@ jobs:
         run: cargo check --target $TARGET --no-default-features --features "critical-section-impl,${{ matrix.family }}"
 
 
+  # defmt feature 开启态(错误类型 Format derive 的编译保障)
+  defmt:
+    name: defmt-on check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout sibling path dependencies
+        run: |
+          git clone --depth 1 https://github.com/SunWithCloude/Cw32l012_pac.git "$GITHUB_WORKSPACE/../cw32l012-pac"
+          git clone --depth 1 https://github.com/SunWithCloude/cw32-pacs.git "$GITHUB_WORKSPACE/../cw32-pacs"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv6m-none-eabi
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --target $TARGET --no-default-features --features "critical-section-impl,cw32l012,defmt"
+
   docs:
     name: docs
     runs-on: ubuntu-latest
