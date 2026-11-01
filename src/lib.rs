@@ -94,7 +94,7 @@ fam_exclusive!("cw32l012", "cw32l010", "cw32l011", "cw32f030", "cw32l031", "cw32
 )))]
 compile_error!("必须启用一个家族 feature:cw32l012 / cw32l010 / cw32l011 / cw32f030 / cw32l031 / cw32l052 / cw32r031 / cw32w031 / cw32f020 / cw32f003");
 
-#[cfg(feature = "cw32l012")]
+#[cfg(any(feature = "cw32l012", feature = "cw32f030", feature = "cw32f020"))]
 pub mod adc;
 #[cfg(feature = "cw32l012")]
 pub mod dac;
