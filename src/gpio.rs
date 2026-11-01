@@ -282,8 +282,10 @@ impl GpioPort for pac::GPIO {
             pac::GPIOA_BASE => 0,
             a if a == pac::GPIOA_BASE + 0x400 => 1,
             a if a == pac::GPIOA_BASE + 0x800 => 2,
+            a if a == pac::GPIOA_BASE + 0xC00 => 4,
             a if a == pac::GPIOA_BASE + 0x1400 => 3,
-            _ => unreachable!("GPIO 基地址不在 A/B/C/F"),
+            a if a == pac::GPIOA_BASE + 0x1000 => 5,
+            _ => unreachable!("GPIO 基地址不在 A/B/C/D/E/F"),
         },
         isr,
         icr,
@@ -510,12 +512,15 @@ pub struct Input<P: GpioPort> {
 }
 
 /// 每端口 16 引脚的 waker 表
-static WAKERS: [[AtomicWaker; 16]; 4] = [const { [const { AtomicWaker::new() }; 16] }; 4];
+// bank 0..3 = A/B/C/F(全家族);4 = GPIOD、5 = GPIOE(仅 l052/l083 的
+// 共享向量家族使用——向量按 C+D / E+F 成对派发,bank 分槽避免
+// 同 pin 位互相污染 TRIGGERED 位图)
+static WAKERS: [[AtomicWaker; 16]; 6] = [const { [const { AtomicWaker::new() }; 16] }; 6];
 
 /// 每端口的软件触发位图（IRQ 清硬件标志后置位，任务侧消费；
 /// 全程 critical section，避免丢唤醒）
-static TRIGGERED: [core::sync::atomic::AtomicU32; 4] =
-    [const { core::sync::atomic::AtomicU32::new(0) }; 4];
+static TRIGGERED: [core::sync::atomic::AtomicU32; 6] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; 6];
 
 impl<P: GpioPort> Input<P> {
     /// 配置为数字输入（DIR=1、ANALOG=0）并设置上/下拉。
@@ -618,6 +623,12 @@ impl<P: GpioPort> Input<P> {
             // l052/l083 的 GPIOC 挂在与 GPIOD 共享的向量上(IRQ7,GPIOC_GPIOD)
             #[cfg(any(feature = "cw32l052", feature = "cw32l083"))]
             2 => crate::interrupt::nvic_enable::<interrupt::GPIOC_GPIOD>(),
+            // GPIOD(l052/l083)与 GPIOE(l083):本体已由 PAC 收编,中断挂
+            // 在与 C/F 共享的向量上(bank 分槽见 WAKERS 注释)
+            #[cfg(any(feature = "cw32l052", feature = "cw32l083"))]
+            4 => crate::interrupt::nvic_enable::<interrupt::GPIOC_GPIOD>(),
+            #[cfg(feature = "cw32l083")]
+            5 => crate::interrupt::nvic_enable::<interrupt::GPIOE_GPIOF>(),
             // GPIOF:l012/f030/经典代小家族/f020 用 GPIOF 名;l010/l011/f003 无;
             // l083 的 GPIOF 挂在与 GPIOE 共享的 GPIOE_GPIOF(IRQ8)上
             #[cfg(feature = "cw32l083")]
@@ -702,6 +713,24 @@ pub(crate) fn on_irq(bank: usize, port: &impl GpioPort) {
     }
 }
 
+/// 共享向量变体:一个中断服务两个端口(如 GPIOC_GPIOD),依次派发——
+/// 两端口 bank 分槽(WAKERS/TRIGGERED),引脚位不互相污染。
+#[allow(unused_macros)]
+macro_rules! port_irq2 {
+    ($irq:ident, $handler:ident, $typ:ty, $base1:expr, $bank1:expr, $base2:expr, $bank2:expr) => {
+        /// 共享向量端口中断标记(bind_interrupts! 绑定用)
+        pub struct $handler;
+        impl IrqHandler<interrupt::$irq> for $handler {
+            fn call() {
+                let p1: &$typ = unsafe { &*($base1 as *const $typ) };
+                on_irq($bank1, p1);
+                let p2: &$typ = unsafe { &*($base2 as *const $typ) };
+                on_irq($bank2, p2);
+            }
+        }
+    };
+}
+
 /// 生成端口中断标记类型与派发
 macro_rules! port_irq {
     ($irq:ident, $handler:ident, $typ:ty, $base:expr, $bank:expr) => {
@@ -765,14 +794,15 @@ port_irq!(GPIOC, GpioCIrq, pac::GPIO, pac::GPIOA_BASE + 0x800, 2);
 #[cfg(feature = "cw32l031")]
 port_irq!(GPIOF, GpioFIrq, pac::GPIO, pac::GPIOA_BASE + 0x1400, 3);
 
-// l052:GPIOC 与 GPIOD 共享 IRQ7,PAC 向量符号 GPIOC_GPIOD;GPIOC 端口
-// 本体存在(gate=AHBEN.6、基址 0x48000800),GPIOD 未收编
+// l052:GPIOC 与 GPIOD 共享 IRQ7(PAC 向量符号 GPIOC_GPIOD)。PAC 实例
+// 回填后 GPIOD 本体已收编(基址 +0xC00)——handler 成对派发 C(bank2)+D(bank4)
 #[cfg(feature = "cw32l052")]
 port_irq!(GPIOA, GpioAIrq, pac::GPIO, pac::GPIOA_BASE, 0);
 #[cfg(feature = "cw32l052")]
 port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOA_BASE + 0x400, 1);
 #[cfg(feature = "cw32l052")]
-port_irq!(GPIOC_GPIOD, GpioCIrq, pac::GPIO, pac::GPIOA_BASE + 0x800, 2);
+port_irq2!(GPIOC_GPIOD, GpioCIrq, pac::GPIO,
+    pac::GPIOA_BASE + 0x800, 2, pac::GPIOA_BASE + 0xC00, 4);
 #[cfg(feature = "cw32l052")]
 port_irq!(GPIOF, GpioFIrq, pac::GPIO, pac::GPIOA_BASE + 0x1400, 3);
 
@@ -806,6 +836,8 @@ port_irq!(GPIOA, GpioAIrq, pac::GPIO, pac::GPIOA_BASE, 0);
 #[cfg(feature = "cw32l083")]
 port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOA_BASE + 0x400, 1);
 #[cfg(feature = "cw32l083")]
-port_irq!(GPIOC_GPIOD, GpioCIrq, pac::GPIO, pac::GPIOA_BASE + 0x800, 2);
+port_irq2!(GPIOC_GPIOD, GpioCIrq, pac::GPIO,
+    pac::GPIOA_BASE + 0x800, 2, pac::GPIOA_BASE + 0xC00, 4);
 #[cfg(feature = "cw32l083")]
-port_irq!(GPIOE_GPIOF, GpioFIrq, pac::GPIO, pac::GPIOA_BASE + 0x1400, 3);
+port_irq2!(GPIOE_GPIOF, GpioFIrq, pac::GPIO,
+    pac::GPIOA_BASE + 0x1000, 5, pac::GPIOA_BASE + 0x1400, 3);
