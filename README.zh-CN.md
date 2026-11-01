@@ -4,35 +4,57 @@
 
 [English](README.md) | **简体中文**
 
-武汉芯源半导体（CMSemicon）**CW32 系列**（Cortex-M0+，**11 个家族**）的 embassy 异步 HAL：
-CW32L012（默认，feature `cw32l012`）、CW32L010/L011、CW32L031/L052/L083/R031/W031、
-CW32F003/F020/F030(A030)。
+武汉芯源半导体（CMSemicon）**CW32 系列**（Cortex-M0+）的 embassy 异步 HAL——**11 个家族**，
+由互斥的 Cargo feature 选择：`cw32l012`（默认）、`cw32l010`、`cw32l011`、`cw32f030`
+（CW32F030/A030）、`cw32f020`、`cw32f003`、`cw32l031`、`cw32l052`、`cw32l083`、
+`cw32r031`、`cw32w031`。
 
-寄存器层：[cw32l012-pac](https://github.com/SunWithCloude/Cw32l012_pac)（L012，寄存器数据
-转录自《CW32L012 用户手册》V1.4，与 cw32l012-hal 同源）与
-[cw32-pacs](https://github.com/SunWithCloude/cw32-pacs)（其余 10 家族，由厂商 SDK 头文件生成）。
-全部家族的通用 BSP 见 [cw32-bsp](https://github.com/SunWithCloude/cw32-bsp)。
+两代硬件：**L012 代组**（`cw32l010`/`cw32l011`/`cw32l012`）的 SYSCTRL 门控写入要带
+0x5A5A 键；**经典代组**（其余 8 家族）无键（直接读改写）。外设寄存器面也随代不同
+（UART 错误位、门控布局，以及 I2C/ADC 这类整套不同的 IP）。
+
+## 生态系统
+
+- [cw32l012-pac](https://github.com/SunWithCloude/Cw32l012_pac)——默认家族的 PAC，
+  寄存器数据转录自《CW32L012 用户手册》V1.4，逐项核对。
+- [cw32-pacs](https://github.com/SunWithCloude/cw32-pacs)——其余 10 家族的 PAC，由厂商
+  SDK 头文件生成（同一份生成器、同一种产物风格）。
+- [cw32-bsp](https://github.com/SunWithCloude/cw32-bsp)——全部 11 家族的通用 BSP：
+  引脚映射表 + `blink` / `uart_echo` 工程模板。
 
 ## 提供内容
 
 | 模块 | 内容 |
 |------|------|
 | `time_driver` | SysTick 时间驱动（embassy-time-driver 0.2 接口）。1MHz tick、动态单次闹钟（`RVR` 重编程），**空闲时无周期性唤醒**，低功耗友好 |
-| `bind_interrupts!` | embassy 风格编译期中断绑定（绑错中断直接编译失败） |
-| `gpio` | 异步 `Input`（`wait_for_rising_edge` / `wait_for_falling_edge` / `wait_for_any_edge` / `wait_for_high` / `wait_for_low`）+ `Output`（含 `embedded-hal` 1.0 trait） |
-| `uart` | 异步 UART1/2/3：逐字节 `Uart` + **`BufferedUart`**（后台环形缓冲收发，embassy-sync `Pipe`，收/发各 64 字节，多任务并发读写，`flush` 等 TC；设计吸收自 cw32-hal2，见 `THIRD_PARTY.md`） |
-| `i2c` | 异步 I2C1/2 主机（`embedded-hal-async::i2c::I2c`，命令 FIFO 式外设） |
-| `spi` | 异步 SPI1/2/3 主机（`SpiBus`，软件 CS） |
+| `bind_interrupts!` | embassy 风格编译期中断绑定（绑错中断直接编译失败）；驱动构造时自动使能对应 NVIC 线 |
+| `gpio` | 异步 `Input`（`wait_for_rising_edge` / `wait_for_falling_edge` / `wait_for_any_edge` / `wait_for_high` / `wait_for_low`）+ `Output`（含 `embedded-hal` 1.0 trait），全家族；每端口一条共享中断按位唤醒 per-pin waker（l052/l083 的共享向量 `GPIOC_GPIOD` / `GPIOE_GPIOF` 成对派发端口对） |
+| `uart` | 异步 UART（`embedded-io-async`），全家族：逐字节 `Uart` + **`BufferedUart`**（后台环形缓冲收发，embassy-sync `Pipe`，收/发各 64 字节，多任务并发读写，`flush` 等 TC）。L012/F030 有 UART1/2/3，其余家族单 UART1。L012 另有 `write_dma`/`read_dma`（语义级实现，待实板验证）。设计吸收自 cw32-hal2，见 `THIRD_PARTY.md` |
+| `spi` | 异步 SPI 主机（`SpiBus`，软件 CS），全家族：L012 SPI1/2/3、F030 SPI1/2，其余单实例；两代同守 ICR R1W0 纪律。L012 另有 `transfer_dma`/`write_dma`（语义级实现，待实板验证） |
+| `i2c` | 异步 I2C 主机（`embedded-hal-async::i2c::I2c`），11 家族中覆盖 10 个（L011 无 I2C 硬件）：L012 保留命令 FIFO 式控制器；其余 9 家族为经典 8051 风格状态机控制器，事务单次 START、操作间发重复起始（F030 上板验证，其余经典家族为逐 PAC 位面比对的编译级接入） |
+| `timer` | （L012）GTIM1-4 单通道边沿对齐 PWM（`SetDutyCycle`，万分比 0..=10000 满量程），`wait_update()` 异步等更新事件；纯 PWM 无需绑中断 |
+| `adc` | 一个模块、两套 IP：L012 ADC1/2 异步单次/序列转换，含内部通道（经 1.2V 基准的 `vdda_mv()`、`temperature_mc()`）与 `read_sequence_dma()`；经典组（F030/F020，完全不同的 IP）独立实现——异步单次/4 结果序列，内部通道 VDDA/3 + 温度 + 1.2V 基准，软件触发路径 |
+| `rtc` | （L012）BCD 日历读写（`now`/`set_datetime`）+ 异步闹钟（`wait_alarm`，KEY 解锁序列包进临界区），LSE/LSI 时基 |
+| `wdt` | （L012）IWDT 独立看门狗 + WWDGT 窗口看门狗，非异步薄封装，带喂狗窗口求解器（`WindowConfig::for_feed_interval`） |
+| `dac` | （L012）双通道 12 位输出（`set_ch1`/`set_ch2`/`set_both` + 回读），DMA 波形输出——单发 `write_dma` 与 `start_dma_loop`/`stop_dma` 环形循环（GTIM TRGO 供拍）；含 DAC→ADC 片内回环示例 |
+| `dma` | 两代 IP：L012 `Dma`——4 通道（IRQ9 `DMA12` = 通道 1/2、IRQ10 `DMA34` = 通道 3/4），`mem_to_mem`/`periph_to_mem`/`mem_to_periph`；经典组 `ClassicDma`（F020/F030/L031/L052/L083/R031/W031）——F030/F020/L083 5 通道、L031 组 4 通道，**F003/L010/L011 无 DMA 硬件**（F020 通道 4/5 无 NVIC 线，仅轮询）。两代各配硬件触发源表（`pac::dma::hs`） |
 | `critical-section-impl` | PRIMASK 实现（默认开启；全固件唯一） |
+| `defmt` | 可选 feature：驱动错误/配置类型（30+）derive `defmt::Format`；`rtt_hello` 示例打通 defmt-rtt 端到端日志 |
+
+`examples/` 下有 20 个可运行示例（blink、UART echo/缓冲/DMA、SPI 回环/DMA、I2C 扫描、
+ADC 异步/DMA/F030、DAC 波形与 DAC→ADC 回环、RTC 闹钟、看门狗、两代 DMA mem2mem、
+定时器 PWM、RTT hello），各自按家族 feature 门控（见 `Cargo.toml`）。
 
 ## 快速开始
 
-本 crate 依赖同级的 `cw32l012-pac` 目录，**两个仓库要放在一起**：
+本 crate 依赖同级放置的 PAC 仓库：默认家族用 `cw32l012-pac`，其余 10 家族用
+`cw32-pacs`（各 PAC 位于 `../cw32-pacs/crates/<家族>-pac`）。**仓库要放在一起**：
 
 ```
 Desktop/
-├── cw32l012-pac/
-└── embassy-cw32/      ← 本仓库
+├── cw32l012-pac/        ← 默认 `cw32l012` feature 需要
+├── cw32-pacs/           ← 构建其余 10 家族时需要
+└── embassy-cw32/        ← 本仓库
 ```
 
 ```toml
@@ -52,7 +74,7 @@ use embassy_cw32::{gpio::{Level, Output, Pin}, sysctrl_enable_gpioc, Config, Per
 
 #[main]
 async fn main(_spawner: embassy_executor::Spawner) {
-    embassy_cw32::init(Config::default()); // 复位默认 SysClk = 4MHz
+    embassy_cw32::init(Config::default()); // 复位默认：L012 代组 4MHz / 经典代组 8MHz
     let p = Peripherals::take().unwrap();
     sysctrl_enable_gpioc(p.sysctrl);
     let mut led = Output::new(Pin::new(p.gpioc, 13), Level::High);
@@ -77,9 +99,10 @@ cargo build --target thumbv6m-none-eabi --release --features rt --example blink_
 
 ## 时钟约定
 
-v0.1 不做时钟树配置。`Config { hclk_hz, pclk_hz }` 只是**声明**当前频率
-（复位默认均 4MHz），用于 SysTick 计时与外设波特率换算。需要变频的固件
-请先用寄存器层配好时钟再 `init`，并传入对应频率。
+本 crate 不做时钟树配置。`Config { hclk_hz, pclk_hz }` 只是**声明**当前频率，
+用于 SysTick 计时与外设波特率换算；`Config::default()` 按复位默认取值——
+**L012 代组 4MHz**（HSI 96M/24），**经典代组 8MHz**（HSI 48M/6）。需要变频的
+固件请先用寄存器层配好时钟再 `init`，并传入对应频率。
 
 ## 中断绑定
 
@@ -117,12 +140,13 @@ embassy-time 语义安全）。`now()` 带单调钳制（`LAST_NOW`），消除�
 
 ## 尚未支持（路线图）
 
-- DMA 搬运（UART/SPI、ADC、memory-to-memory）——基于中断的缓冲 UART 已在 v0.2 落地
-- 异步 ADC / DAC / 定时器 PWM / RTC 闹钟唤醒
+- 非 L012 家族的 `timer` / `rtc` / `wdt` / `dac`（逐家族寄存器面；经典组
+  ADC 已先行落地 F030/F020）
+- L031 组 / F003 / L010 / L011 的 ADC（另一种 IP，尚未接入）
+- L012 命令 FIFO 式 I2C 的 repeated-start（经典控制器已支持单 START 事务）
+- 经典代的 UART/SPI DMA（L012 已有，语义级实现）
+- F030 `rcc` 之外的时钟树运行时配置（async RCC API）
 - `Output` 的 `wait_for_settle` 类高级 API、GPIO 低功耗唤醒配置
-- 时钟树运行时配置（RCC async API）
-- I2C repeated-start（v0.1 每个操作独立 START…STOP）
-- defmt 支持（feature 门控）
 
 ## 与 cw32l012-hal 的关系
 
@@ -139,9 +163,10 @@ embassy-time 语义安全）。`now()` 带单调钳制（`LAST_NOW`），消除�
 
 ## 验证状态
 
-- `thumbv6m-none-eabi`：lib + 两个示例，debug/release/clippy 零警告；
-  链接产物向量表经 `nm`/`objdump` 核验（`__INTERRUPTS@0x40`、SysTick →
-  时间驱动、UART1 → 绑定处理器、未绑定项 → DefaultHandler）；
+- `thumbv6m-none-eabi`：lib 与示例在 CI 中零警告构建（11 家族互斥矩阵 +
+  defmt-on 两类 job）；链接产物向量表经 `nm`/`objdump` 核验
+  （`__INTERRUPTS@0x40`、SysTick → 时间驱动、UART1 → 绑定处理器、
+  未绑定项 → DefaultHandler）；
 - `cargo test`（宿主机）通过（布局/文档测试）；
 - **blink_async 已于 2026-10-24 在 CW32L012 实板验证**（probe-rs +
   ST-Link V2）：PC13 经 `Timer::after_millis(500)` 精确 1 秒周期翻转
@@ -156,14 +181,28 @@ embassy-time 语义安全）。`now()` 带单调钳制（`LAST_NOW`），消除�
   自动清零、心跳不停——向量 → `bind_interrupts!` → `buffered_irq` →
   临界区 的完整中断管线实机跑通。缓冲数据的实际收发仍需串口适配器。
 
+## F030 家族备注
+
+- `--no-default-features --features "rt,cw32f030,critical-section-impl"` 构建
+  CW32F030/A030（生成版 `cw32f030-pac`，cw32-pac-gen 产物）。
+- 复位默认时钟 **8MHz**（HSI 48M/6）——`Config::default()` 已处理。
+- 本代 SYSCTRL 的 AHBEN/APBEN **无 KEY 保护**（不同于 L012 的 0x5A5A
+  键控写），门控走读改写；CR0/CR1/IER 则带 KEY。`rcc` 模块（PLL 配方
+  转录自厂商库）处理键控写，切频后用 `set_frequencies` 重新声明时钟。
+- 经典 I2C 是另一套外设（8051 风格状态机），已有独立驱动；
+  `i2c_scan_f030` 上板验证（空总线 112/112 地址 NACK，寄存器链逐项核对）。
+- LCKFB CW32F030C8T7 实板验证：blink_async_f030（500ms 心跳）、UART1
+  初始化链（PA08/PA09 AF2，BRRI=4 @115200）、SPI1（CR1=0x1E7C，
+  AFRL=0x55500000）。
+
 ## 相关工作
 
 [fan2nd/cw32-hal2](https://github.com/fan2nd/cw32-hal2)（2026-10，早于本
 crate 出现）走全家桶路线：chiptool/metapac 架构覆盖 CW32F/L/A 多家族，
 驱动面广（UART DMA/LIN、SPI PIO、深度定时器），时间驱动用 GTIM 硬件
-比较。本 crate 定位不同：单芯片（L012）深挖、零依赖 PAC、寄存器数据
-对 UM V1.4 逐项核对 + 实板验证。吸收了哪些内容、依据什么许可，见
-`THIRD_PARTY.md`。
+比较。本 crate 定位不同：逐家族 PAC（L012 手写核对版对 UM V1.4 逐项
+核对，其余家族由厂商 SDK 头文件生成），驱动按各家手册核对，有板子的
+地方上板验证。吸收了哪些内容、依据什么许可，见 `THIRD_PARTY.md`。
 
 ## 许可
 

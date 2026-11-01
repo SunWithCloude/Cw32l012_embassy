@@ -4,32 +4,48 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-Multi-family embassy async HAL for Wuhan Xinyuan (CMSemicon) **CW32** Cortex-M0+ MCUs — **11 families**: CW32L012 (default, feature `cw32l012`), CW32L010/L011, CW32L031/L052/L083/R031/W031, and CW32F003/F020/F030(A030).
+Multi-family embassy async HAL for Wuhan Xinyuan (CMSemicon) **CW32** Cortex-M0+ MCUs — **11 families**, selected by mutually exclusive Cargo features: `cw32l012` (default), `cw32l010`, `cw32l011`, `cw32f030` (CW32F030/A030), `cw32f020`, `cw32f003`, `cw32l031`, `cw32l052`, `cw32l083`, `cw32r031`, `cw32w031`.
 
-Register layers: [cw32l012-pac](https://github.com/SunWithCloude/Cw32l012_pac) (L012, transcribed from the vendor's *CW32L012 User Manual* V1.4) and [cw32-pacs](https://github.com/SunWithCloude/cw32-pacs) (the other 10 families, generated from the vendor SDK headers). Generic BSPs for all families live in [cw32-bsp](https://github.com/SunWithCloude/cw32-bsp).
+Two hardware generations: the **L012 generation** (`cw32l010`/`cw32l011`/`cw32l012`) gates SYSCTRL writes behind a 0x5A5A key; the **classic generation** (the other 8 families) has no key (plain read-modify-write). Peripheral register sets differ between the generations too (UART error-flag bits, gate layout, and whole peripherals such as the I2C or ADC IP).
+
+## Ecosystem
+
+- [cw32l012-pac](https://github.com/SunWithCloude/Cw32l012_pac) — PAC for the default family, transcribed and checked line-by-line against the *CW32L012 User Manual* V1.4.
+- [cw32-pacs](https://github.com/SunWithCloude/cw32-pacs) — PACs for the other 10 families, generated from the vendor SDK headers (one generator, same output style).
+- [cw32-bsp](https://github.com/SunWithCloude/cw32-bsp) — generic BSPs for all 11 families: pin mapping tables plus `blink` / `uart_echo` project templates.
 
 ## What you get
 
 | Module | Contents |
 |--------|----------|
 | `time_driver` | SysTick time driver for the embassy-time-driver 0.2 interface: 1 MHz tick, dynamic one-shot alarm (reprograms `RVR`), **no periodic wakeup while idle** — low-power friendly |
-| `bind_interrupts!` | embassy-style compile-time interrupt binding (binding the wrong IRQ fails to compile) |
-| `gpio` | async `Input` (`wait_for_rising_edge` / `wait_for_falling_edge` / `wait_for_any_edge` / `wait_for_high` / `wait_for_low`) and `Output` (with the `embedded-hal` 1.0 traits) |
-| `uart` | async UART1/2/3: byte-wise `Uart` **plus `BufferedUart`** — background ring-buffered TX/RX (embassy-sync `Pipe`, 64 bytes each way), concurrent multi-task readers/writers, `flush` waits for TC. Design absorbed from cw32-hal2, see `THIRD_PARTY.md` |
-| `spi` | (since v0.3) also compiles for the classic F030 generation: family bit-constant surface (BR width/EN position/gates differ), ICR is R1W0 on both |
-| `i2c` | async I2C1/2 master (`embedded-hal-async::i2c::I2c`, command-FIFO peripheral) |
-| `spi` | async SPI1/2/3 master (`SpiBus`, software chip-select) |
+| `bind_interrupts!` | embassy-style compile-time interrupt binding (binding the wrong IRQ fails to compile); driver constructors enable their NVIC lines automatically |
+| `gpio` | async `Input` (`wait_for_rising_edge` / `wait_for_falling_edge` / `wait_for_any_edge` / `wait_for_high` / `wait_for_low`) and `Output` (with the `embedded-hal` 1.0 traits), all families; one shared IRQ per port wakes per-pin wakers (l052/l083 shared vectors `GPIOC_GPIOD` / `GPIOE_GPIOF` dispatch the port pairs) |
+| `uart` | async UART (`embedded-io-async`) on all 11 families: byte-wise `Uart` **plus `BufferedUart`** — background ring-buffered TX/RX (embassy-sync `Pipe`, 64 bytes each way), concurrent multi-task readers/writers, `flush` waits for TC. L012/F030 expose UART1/2/3, the remaining families a single UART1. L012 additionally `write_dma`/`read_dma` (semantics-level, pending on-hardware validation). Design absorbed from cw32-hal2, see `THIRD_PARTY.md` |
+| `spi` | async SPI master (`SpiBus`, software chip-select) on all 11 families: L012 SPI1/2/3, F030 SPI1/2, single instance elsewhere; both generations share the R1W0 `ICR` discipline. L012 additionally `transfer_dma`/`write_dma` (semantics-level, pending on-hardware validation) |
+| `i2c` | async I2C master (`embedded-hal-async::i2c::I2c`) on 10 of 11 families (L011 has no I2C hardware): L012 keeps its command-FIFO controller; the other nine use the classic 8051-style state-machine controller, whose transactions issue a single START with repeated-START between operations (F030 verified on board, remaining classic parts compile-level from per-PAC bit-plane comparison) |
+| `timer` | (L012) GTIM1-4 single-channel edge-aligned PWM (`SetDutyCycle`, 0..=10000 full scale) with `wait_update()` for async update-event ticks; plain PWM needs no IRQ binding |
+| `adc` | two IPs behind one module: L012 ADC1/2 async single/sequence conversion with internal channels (`vdda_mv()` via the 1.2 V BGR, `temperature_mc()`) and `read_sequence_dma()`; classic group (F030/F020, a completely different IP) separately implemented — async single/4-result sequence, internal channels VDDA/3 + temperature + 1.2 V BGR, software-triggered path |
+| `rtc` | (L012) BCD calendar read/write (`now`/`set_datetime`) plus async alarm (`wait_alarm`, the KEY unlock sequence wrapped in a critical section), LSE/LSI time base |
+| `wdt` | (L012) IWDT independent and WWDGT window watchdog as non-async thin wrappers, with a feed-window solver (`WindowConfig::for_feed_interval`) |
+| `dac` | (L012) dual-channel 12-bit output (`set_ch1`/`set_ch2`/`set_both` + readback) with DMA waveform output — one-shot `write_dma` and `start_dma_loop`/`stop_dma` ring mode (GTIM TRGO as trigger); DAC→ADC internal loopback example included |
+| `dma` | two generations: L012 `Dma` — 4 channels (IRQ9 `DMA12` = ch1/2, IRQ10 `DMA34` = ch3/4) with `mem_to_mem`/`periph_to_mem`/`mem_to_periph`; classic `ClassicDma` (F020/F030/L031/L052/L083/R031/W031) — 5 channels on F030/F020/L083, 4 on the L031 group, **no DMA hardware on F003/L010/L011** (F020 channels 4/5 have no NVIC line, polling only). Hardware trigger source tables (`pac::dma::hs`) per generation |
 | `critical-section-impl` | PRIMASK implementation (on by default; one per firmware) |
+| `defmt` | optional feature: driver error/config types (30+) derive `defmt::Format`; the `rtt_hello` example wires defmt-rtt end to end |
+
+Twenty runnable examples live in `examples/` (blink, UART echo/buffered/DMA, SPI loopback/DMA, I2C scan, ADC async/DMA/F030, DAC wave and DAC→ADC loop, RTC alarm, WDT, DMA mem2mem on both generations, timer PWM, RTT hello), each gated by its family feature in `Cargo.toml`.
 
 ## Getting started
 
-This crate depends on a sibling checkout of `cw32l012-pac`, so **land both
-repos side by side**:
+This crate depends on sibling checkouts of its PAC crates: `cw32l012-pac` for the
+default family, `cw32-pacs` for the other 10 families (each PAC sits at
+`../cw32-pacs/crates/<family>-pac`). **Land the repos side by side**:
 
 ```
 Desktop/
-├── cw32l012-pac/
-└── embassy-cw32/      <- this repo
+├── cw32l012-pac/       <- needed for the default `cw32l012` feature
+├── cw32-pacs/          <- needed when building for one of the other 10 families
+└── embassy-cw32/       <- this repo
 ```
 
 ```toml
@@ -49,7 +65,7 @@ use embassy_cw32::{gpio::{Level, Output, Pin}, sysctrl_enable_gpioc, Config, Per
 
 #[main]
 async fn main(_spawner: embassy_executor::Spawner) {
-    embassy_cw32::init(Config::default()); // reset default: SysClk = 4 MHz
+    embassy_cw32::init(Config::default()); // reset default: 4 MHz (L012 gen) / 8 MHz (classic gen)
     let p = Peripherals::take().unwrap();
     sysctrl_enable_gpioc(p.sysctrl);
     let mut led = Output::new(Pin::new(p.gpioc, 13), Level::High);
@@ -74,10 +90,12 @@ cargo build --target thumbv6m-none-eabi --release --features rt --example blink_
 
 ## Clock convention
 
-v0.1 does not configure the clock tree. `Config { hclk_hz, pclk_hz }` only
-*declares* the current frequencies (4 MHz after reset) so that SysTick and the
-peripheral baud-rate math agree. Firmware that changes clocks should do so with
-the register layer first, then call `init` with the resulting frequencies.
+The crate does not configure the clock tree. `Config { hclk_hz, pclk_hz }` only
+*declares* the current frequencies so that SysTick and the peripheral baud-rate
+math agree; `Config::default()` follows the reset defaults — **4 MHz** on the
+L012 generation (HSI 96M/24) and **8 MHz** on the classic generation (HSI
+48M/6). Firmware that changes clocks should do so with the register layer
+first, then call `init` with the resulting frequencies.
 
 ## Interrupt binding
 
@@ -119,12 +137,14 @@ reprogram otherwise produces.
 
 ## Roadmap (not yet supported)
 
-- DMA-backed transfers (UART/SPI, ADC, memory-to-memory) — the IRQ-buffered UART already landed in v0.2
-- async ADC / DAC / timer PWM / RTC alarm wakeup
+- `timer` / `rtc` / `wdt` / `dac` on the non-L012 families (per-family register
+  surfaces; classic-group ADC already landed for F030/F020)
+- ADC for the L031 group / F003 / L010 / L011 (yet another IP, not yet wired)
+- I2C repeated-start on the L012 command-FIFO controller (the classic
+  controller already runs single-START transactions)
+- DMA-backed UART/SPI on the classic generation (L012 has it, semantics-level)
+- runtime clock-tree configuration beyond the F030 `rcc` helper (async RCC API)
 - `Output` settle helpers, GPIO low-power wakeup configuration
-- runtime clock-tree configuration (async RCC API)
-- I2C repeated-start (v0.1 issues START…STOP per operation)
-- `defmt` support (feature-gated)
 
 ## Relationship to cw32l012-hal
 
@@ -142,8 +162,9 @@ the link will fail.
 
 ## Verification status
 
-- `thumbv6m-none-eabi`: lib + both examples, debug/release/clippy warning-free;
-  the linked vector table was checked with `nm`/`objdump` (`__INTERRUPTS @ 0x40`,
+- `thumbv6m-none-eabi`: lib and examples build warning-free in CI, which checks
+  all 11 family features exclusively plus a defmt-on job; the linked vector
+  table was checked with `nm`/`objdump` (`__INTERRUPTS @ 0x40`,
   SysTick → time driver, UART1 → bound handler, the rest → `DefaultHandler`).
 - `cargo test` passes on the host (layout / doc tests).
 - **blink_async verified on a CW32L012 board (2026-10-24)** with probe-rs +
@@ -160,17 +181,22 @@ the link will fail.
   the full vector → `bind_interrupts!` → `buffered_irq` → critical-section
   path on hardware. Actual buffered data flow still needs a serial adapter.
 
-## F030 family notes (v0.3)
+## F030 family notes
 
 - `--no-default-features --features "rt,cw32f030,critical-section-impl"` builds
   for CW32F030/A030 against the generated `cw32f030-pac` (cw32-pac-gen).
 - Reset clock is **8 MHz** (HSI 48M/6) — `Config::default()` handles it.
 - The SYSCTRL AHBEN/APBEN registers have **no key protection** on this
-  generation (unlike L012's 0x5A5A-gated writes); gates use read-modify-write.
+  generation (unlike L012's 0x5A5A-gated writes); gates use read-modify-write,
+  while CR0/CR1/IER do carry the key. The `rcc` module (PLL setup transcribed
+  from the vendor library) handles the keyed writes, and `set_frequencies`
+  re-declares the clocks after a switch.
+- The classic I2C is a different peripheral (8051-style state machine) with its
+  own driver; `i2c_scan_f030` was verified on board (112/112 addresses NACK on
+  an empty bus, register chain checked item by item).
 - Verified on an LCKFB CW32F030C8T7: blink_async_f030 (500 ms heartbeat),
   UART1 init chain (PA08/PA09 AF2, BRRI=4 @115200), SPI1 (CR1=0x1E7C,
-  AFRL=0x55500000). i2c remains L012-only (the classic I2C is a different
-  peripheral; roadmap).
+  AFRL=0x55500000).
 
 ## Related work
 
@@ -178,9 +204,10 @@ the link will fail.
 than this crate) takes a whole-family approach: chiptool/metapac architecture
 covering many CW32F/L/A parts, broad driver surface (UART DMA/LIN, SPI PIO,
 deep timer coverage), GTIM hardware-compare time driver. This crate instead
-goes deep on the L012 only, with a zero-dependency PAC, register data checked
-line-by-line against UM V1.4, and on-hardware verification. See
-`THIRD_PARTY.md` for what was absorbed from it and under which license.
+builds on per-family PACs — the L012 one transcribed line-by-line against UM
+V1.4, the rest generated from vendor SDK headers — with drivers checked against
+each family's manual and on-hardware verification where a board is available.
+See `THIRD_PARTY.md` for what was absorbed from it and under which license.
 
 ## License
 
