@@ -119,7 +119,16 @@ pub(crate) mod ub {
 // 一致:ISR TXE0/TC1/RC2/FE3/PE4,无 NE/ORE;ICR 为 R1W0,已定义位至 bit11——
 // l083 例外:ICR 已定义位仅至 bit6(CTS),ICR_NONE 多写的 1 落在保留位
 // (R1W0 无动作),CTS 清零无副作用——驱动不用硬件流控)
-#[cfg(any(feature = "cw32f030", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031", feature = "cw32f020", feature = "cw32f003"))]
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031",
+    feature = "cw32f020",
+    feature = "cw32f003"
+))]
 pub(crate) mod ub {
     use crate::pac::uart as raw;
     /// 发送缓冲空(ISR/IER bit0)
@@ -386,7 +395,13 @@ impl Uart {
             sysctrl.apben1.write(crate::SYSCTRL_KEY | (1 << 3));
         }
         // 经典代单 UART 家族(l031 等):uart1en = APBEN2.9,无 KEY,读改写
-        #[cfg(any(feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+        #[cfg(any(
+            feature = "cw32l031",
+            feature = "cw32l052",
+            feature = "cw32l083",
+            feature = "cw32r031",
+            feature = "cw32w031"
+        ))]
         {
             assert!(idx == 0, "该家族仅 UART1 实例");
             sysctrl.apben2.modify(|v| v | (1 << 9));

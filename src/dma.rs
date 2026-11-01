@@ -582,7 +582,9 @@ fn on_irq_group(base: usize, regs: &'static pac::Dma) {
         let idx = base + i;
         if isr & (0b11 << (2 * idx)) != 0 {
             // 压掉该通道的中断使能（下次 poll 会重新打开）
-            regs.ch[idx].csr.modify(|v| v & !(dc::CSR_TCIE | dc::CSR_TEIE));
+            regs.ch[idx]
+                .csr
+                .modify(|v| v & !(dc::CSR_TCIE | dc::CSR_TEIE));
             WAKERS[idx].wake();
         }
     }
@@ -732,14 +734,30 @@ static CLASSIC_WAKERS: [AtomicWaker; 8] = [const { AtomicWaker::new() }; 8];
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
-#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 pub enum ClassicWidth {
     B8 = 0,
     B16 = 1,
     B32 = 2,
 }
 
-#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 impl ClassicWidth {
     /// 寄存器编码
     #[inline]
@@ -767,7 +785,15 @@ impl ClassicWidth {
 /// 经典组传输模式（`CSR.TRANS`）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 pub enum ClassicMode {
     /// 块传输：每搬完一个数据块插入传输间隙，允许 CPU / 高优先级通道抢占
     Block,
@@ -778,7 +804,15 @@ pub enum ClassicMode {
 /// 经典组触发方式（`TRIG.TYPE` + `TRIG.HARDSRC[7:2]`）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 pub enum ClassicTrigger {
     /// 软件触发：由 [`Channel::start`] 写 `SOFTSRC` 启动
     Software,
@@ -797,7 +831,15 @@ pub enum ClassicTrigger {
 /// 完成，l031 组是 10=序列+50=单次；SPI2/LCD/UART4-6 只在部分家族存在），
 /// 常量按家族 cfg 裁剪——只列出该家族手册表中存在的请求。
 #[allow(missing_docs)]
-#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 pub mod hs {
     // ---- 全经典组共有（各家 §8.8.4 请求表同段同值）----
     pub const UART1_RX: u8 = 0x00;
@@ -828,9 +870,19 @@ pub mod hs {
     pub const GTIM2_CC4: u8 = 0x1E;
 
     // ---- SPI2（f030/f020/l052/l083 有 SPI2；l031/r031/w031 手册表无）----
-    #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l052", feature = "cw32l083"))]
+    #[cfg(any(
+        feature = "cw32f030",
+        feature = "cw32f020",
+        feature = "cw32l052",
+        feature = "cw32l083"
+    ))]
     pub const SPI2_RX: u8 = 0x08;
-    #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l052", feature = "cw32l083"))]
+    #[cfg(any(
+        feature = "cw32f030",
+        feature = "cw32f020",
+        feature = "cw32l052",
+        feature = "cw32l083"
+    ))]
     pub const SPI2_TX: u8 = 0x09;
 
     // ---- ADC：f030/f020 手册表只有一个"转换完成"请求(10)；l031 组拆
@@ -875,29 +927,89 @@ pub mod hs {
     pub const ATIM_CH1B2B3B: u8 = 0x12;
 
     // ---- GTIM3/GTIM4（l031/r031/w031 手册表无；f030/f020/l052/l083 有）----
-    #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l052", feature = "cw32l083"))]
+    #[cfg(any(
+        feature = "cw32f030",
+        feature = "cw32f020",
+        feature = "cw32l052",
+        feature = "cw32l083"
+    ))]
     pub const GTIM3_UPD: u8 = 0x1F;
-    #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l052", feature = "cw32l083"))]
+    #[cfg(any(
+        feature = "cw32f030",
+        feature = "cw32f020",
+        feature = "cw32l052",
+        feature = "cw32l083"
+    ))]
     pub const GTIM3_TRIG: u8 = 0x20;
-    #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l052", feature = "cw32l083"))]
+    #[cfg(any(
+        feature = "cw32f030",
+        feature = "cw32f020",
+        feature = "cw32l052",
+        feature = "cw32l083"
+    ))]
     pub const GTIM3_CC1: u8 = 0x21;
-    #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l052", feature = "cw32l083"))]
+    #[cfg(any(
+        feature = "cw32f030",
+        feature = "cw32f020",
+        feature = "cw32l052",
+        feature = "cw32l083"
+    ))]
     pub const GTIM3_CC2: u8 = 0x22;
-    #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l052", feature = "cw32l083"))]
+    #[cfg(any(
+        feature = "cw32f030",
+        feature = "cw32f020",
+        feature = "cw32l052",
+        feature = "cw32l083"
+    ))]
     pub const GTIM3_CC3: u8 = 0x23;
-    #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l052", feature = "cw32l083"))]
+    #[cfg(any(
+        feature = "cw32f030",
+        feature = "cw32f020",
+        feature = "cw32l052",
+        feature = "cw32l083"
+    ))]
     pub const GTIM3_CC4: u8 = 0x24;
-    #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l052", feature = "cw32l083"))]
+    #[cfg(any(
+        feature = "cw32f030",
+        feature = "cw32f020",
+        feature = "cw32l052",
+        feature = "cw32l083"
+    ))]
     pub const GTIM4_UPD: u8 = 0x25;
-    #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l052", feature = "cw32l083"))]
+    #[cfg(any(
+        feature = "cw32f030",
+        feature = "cw32f020",
+        feature = "cw32l052",
+        feature = "cw32l083"
+    ))]
     pub const GTIM4_TRIG: u8 = 0x26;
-    #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l052", feature = "cw32l083"))]
+    #[cfg(any(
+        feature = "cw32f030",
+        feature = "cw32f020",
+        feature = "cw32l052",
+        feature = "cw32l083"
+    ))]
     pub const GTIM4_CC1: u8 = 0x27;
-    #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l052", feature = "cw32l083"))]
+    #[cfg(any(
+        feature = "cw32f030",
+        feature = "cw32f020",
+        feature = "cw32l052",
+        feature = "cw32l083"
+    ))]
     pub const GTIM4_CC2: u8 = 0x28;
-    #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l052", feature = "cw32l083"))]
+    #[cfg(any(
+        feature = "cw32f030",
+        feature = "cw32f020",
+        feature = "cw32l052",
+        feature = "cw32l083"
+    ))]
     pub const GTIM4_CC3: u8 = 0x29;
-    #[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l052", feature = "cw32l083"))]
+    #[cfg(any(
+        feature = "cw32f030",
+        feature = "cw32f020",
+        feature = "cw32l052",
+        feature = "cw32l083"
+    ))]
     pub const GTIM4_CC4: u8 = 0x2A;
 
     // ---- LCD（l052/l083 手册表有）----
@@ -927,7 +1039,15 @@ pub mod hs {
 /// `CNT=0x1_0000|CNT`），每轮传输前都要重新 [`Channel::configure`]。
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 pub struct ClassicConfig {
     /// 源地址
     pub src: u32,
@@ -949,7 +1069,15 @@ pub struct ClassicConfig {
     pub dst_inc: bool,
 }
 
-#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 impl ClassicConfig {
     /// 存储器→存储器（地址自增、BULK、软件触发）
     pub const fn mem_to_mem(src: u32, dst: u32, len: u16, width: ClassicWidth) -> Self {
@@ -967,13 +1095,7 @@ impl ClassicConfig {
     }
 
     /// 外设→存储器（源固定、目的自增、BLOCK、硬件触发）
-    pub const fn periph_to_mem(
-        src: u32,
-        dst: u32,
-        len: u16,
-        width: ClassicWidth,
-        hs: u8,
-    ) -> Self {
+    pub const fn periph_to_mem(src: u32, dst: u32, len: u16, width: ClassicWidth, hs: u8) -> Self {
         Self {
             src,
             dst,
@@ -988,13 +1110,7 @@ impl ClassicConfig {
     }
 
     /// 存储器→外设（源自增、目的固定、BLOCK、硬件触发）
-    pub const fn mem_to_periph(
-        src: u32,
-        dst: u32,
-        len: u16,
-        width: ClassicWidth,
-        hs: u8,
-    ) -> Self {
+    pub const fn mem_to_periph(src: u32, dst: u32, len: u16, width: ClassicWidth, hs: u8) -> Self {
         Self {
             src,
             dst,
@@ -1050,7 +1166,15 @@ impl ClassicConfig {
 /// 经典组 DMA 错误（STATUS 编码同 L012 表 8-2 / 厂商 `DMA_CHANNEL_STATUS_*`）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 pub enum DmaErrorClassic {
     /// 通道号非法
     BadChannel,
@@ -1081,12 +1205,28 @@ pub enum DmaErrorClassic {
 /// let mut dma = ClassicDma::new(p.dma, Irqs);
 /// dma.mem_to_mem(&SRC, &mut dst).await?;
 /// ```
-#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 pub struct ClassicDma {
     regs: &'static pac::DMA,
 }
 
-#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 impl ClassicDma {
     /// 初始化（门控 AHBEN.DMA bit0，无 KEY；清残留标志）
     ///
@@ -1099,8 +1239,8 @@ impl ClassicDma {
     pub fn new(
         regs: &'static pac::DMA,
         _irqs: impl Binding<interrupt::DMACH1>
-            + Binding<interrupt::DMACH23>
-            + Binding<interrupt::DMACH45>,
+        + Binding<interrupt::DMACH23>
+        + Binding<interrupt::DMACH45>,
     ) -> Self {
         Self::init(regs)
     }
@@ -1115,8 +1255,8 @@ impl ClassicDma {
     pub fn new(
         regs: &'static pac::DMA,
         _irqs: impl Binding<interrupt::DMACH1>
-            + Binding<interrupt::DMACH23>
-            + Binding<interrupt::DMACH4>,
+        + Binding<interrupt::DMACH23>
+        + Binding<interrupt::DMACH4>,
     ) -> Self {
         Self::init(regs)
     }
@@ -1166,9 +1306,13 @@ impl ClassicDma {
     ///
     /// `src` / `dst` 长度必须相等且非空、≤65535；元素类型决定位宽
     /// （u8/u16/u32 → 8/16/32bit）。
-    pub async fn mem_to_mem<T: Copy>(&mut self, src: &[T], dst: &mut [T]) -> Result<(), DmaErrorClassic> {
-        let width =
-            ClassicWidth::for_size(core::mem::size_of::<T>()).ok_or(DmaErrorClassic::UnsupportedWidth)?;
+    pub async fn mem_to_mem<T: Copy>(
+        &mut self,
+        src: &[T],
+        dst: &mut [T],
+    ) -> Result<(), DmaErrorClassic> {
+        let width = ClassicWidth::for_size(core::mem::size_of::<T>())
+            .ok_or(DmaErrorClassic::UnsupportedWidth)?;
         if src.is_empty() || src.len() != dst.len() || src.len() > 0xFFFF {
             return Err(DmaErrorClassic::BadLength);
         }
@@ -1248,13 +1392,29 @@ impl ClassicDma {
 }
 
 /// 经典组单个 DMA 通道（每通道独立块：CSR/CNT/SRCADDR/DSTADDR/TRIG）
-#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 pub struct Channel<'d> {
     regs: &'d pac::DMA,
     idx: usize,
 }
 
-#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 impl Channel<'_> {
     #[inline]
     fn ch(&self) -> &'static pac::DMACHANNEL {
@@ -1374,7 +1534,9 @@ impl Channel<'_> {
                 } else {
                     Ok(())
                 };
-                self.ch().csr.modify(|v| v & !(cbits::CSR_TCIE | cbits::CSR_TEIE));
+                self.ch()
+                    .csr
+                    .modify(|v| v & !(cbits::CSR_TCIE | cbits::CSR_TEIE));
                 self.clear_flags();
                 Poll::Ready(r)
             } else {
@@ -1394,7 +1556,15 @@ impl Channel<'_> {
 }
 
 /// 从经典组 CSR.STATUS 解码传输结果（厂商 `DMA_CHANNEL_STATUS_*` 编码）
-#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 fn decode_status(status: u8) -> Result<(), DmaErrorClassic> {
     match status {
         1 => Err(DmaErrorClassic::AddressOutOfRange),
@@ -1423,16 +1593,34 @@ fn on_irq_channels(base: usize, count: usize, regs: &'static pac::DMA) {
         let idx = base + i;
         if isr & (0b11 << (4 * idx)) != 0 {
             // 压掉该通道的中断使能（下次 poll 会重新打开）
-            classic_ch(idx).csr.modify(|v| v & !(cbits::CSR_TCIE | cbits::CSR_TEIE));
+            classic_ch(idx)
+                .csr
+                .modify(|v| v & !(cbits::CSR_TCIE | cbits::CSR_TEIE));
             CLASSIC_WAKERS[idx].wake();
         }
     }
 }
 
 /// 经典组 DMA 通道 1 独占中断标记（IRQ9 `DMACH1`，全经典组同名）
-#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 pub struct Dmach1Irq;
-#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 impl IrqHandler<interrupt::DMACH1> for Dmach1Irq {
     fn call() {
         on_irq_channels(0, 1, unsafe { &*(pac::DMA_BASE as *const pac::DMA) });
@@ -1505,7 +1693,18 @@ impl IrqHandler<interrupt::DMACH4> for Dmach4Irq {
 }
 
 // 经典组位面/编码单元测试（位常量来自经典组 PAC，宿主机即可跑）
-#[cfg(all(test, any(feature = "cw32f030", feature = "cw32f020", feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031")))]
+#[cfg(all(
+    test,
+    any(
+        feature = "cw32f030",
+        feature = "cw32f020",
+        feature = "cw32l031",
+        feature = "cw32l052",
+        feature = "cw32l083",
+        feature = "cw32r031",
+        feature = "cw32w031"
+    )
+))]
 mod classic_tests {
     use super::*;
 
@@ -1654,13 +1853,8 @@ mod tests {
         assert_eq!(cfg.encode_cnt(), 1000 | (3 << 16));
         assert_eq!(cfg.encode_trig(), 0); // 软件触发
 
-        let cfg = Config::periph_to_mem(
-            0x4000_0030,
-            0x2000_0000,
-            8,
-            Width::B16,
-            dc::hs::ADC1_SINGLE,
-        );
+        let cfg =
+            Config::periph_to_mem(0x4000_0030, 0x2000_0000, 8, Width::B16, dc::hs::ADC1_SINGLE);
         assert_eq!(
             cfg.encode_trig(),
             dc::TRIG_TYPE | ((dc::hs::ADC1_SINGLE as u32) << dc::TRIG_HARDSRC_POS)

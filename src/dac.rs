@@ -344,9 +344,9 @@ impl Dac {
     /// TENx 再写位域，通道使能状态保持不变）
     pub fn set_trigger(&mut self, ch: DacChannel, trig: DacTrig) {
         let (pos, mask) = ch.tsel_field();
-        self.regs.cr0.modify(|v| {
-            (v & !ch.ten_bit() & !mask) | (trig.code() << pos)
-        });
+        self.regs
+            .cr0
+            .modify(|v| (v & !ch.ten_bit() & !mask) | (trig.code() << pos));
     }
 
     /// DMA 波形播放（one-shot）：整段缓冲经 DMA 自动搬运到 DHR，逐触发
@@ -410,7 +410,9 @@ impl Dac {
         // 收尾：停 DMA 通道 → 恢复直写模式（DMAENx/TENx=0，TSEL 保留）→
         // 末样点经直写补播（第 N+1 次触发的播放效果）
         dch.stop();
-        self.regs.cr0.modify(|v| v & !(ch.dmaen_bit() | ch.ten_bit()));
+        self.regs
+            .cr0
+            .modify(|v| v & !(ch.dmaen_bit() | ch.ten_bit()));
         match ch {
             DacChannel::Ch1 => self.regs.dhr12r1.write(*buf.last().unwrap() as u32),
             DacChannel::Ch2 => self.regs.dhr12r2.write(*buf.last().unwrap() as u32),
@@ -474,7 +476,9 @@ impl Dac {
         let dch = dma.channel(2);
         dch.stop();
         dch.clear_flags();
-        self.regs.cr0.modify(|v| v & !(ch.dmaen_bit() | ch.ten_bit()));
+        self.regs
+            .cr0
+            .modify(|v| v & !(ch.dmaen_bit() | ch.ten_bit()));
         self.dmaudr(ch); // 代清可能残留的下溢标志
     }
 

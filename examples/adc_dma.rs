@@ -64,20 +64,25 @@ async fn main(_spawner: embassy_executor::Spawner) {
     let _pa0 = Pin::new(p.gpioa, 0).into_analog();
 
     // 序列：外部 + 两个内部通道（内部通道的 BGREN 稳定期由驱动自动处理）
-    let chs = [AdcChannel::In(0), AdcChannel::Bgr1v2, AdcChannel::TempSensor];
+    let chs = [
+        AdcChannel::In(0),
+        AdcChannel::Bgr1v2,
+        AdcChannel::TempSensor,
+    ];
     let samples = [SampleCycles::S24, SampleCycles::S166, SampleCycles::S262];
     let mut buf = [0u16; 3];
 
     loop {
-        match adc.read_sequence_dma(&mut dma, &chs, &samples, &mut buf).await {
-            Ok(()) => {
-                unsafe {
-                    ERR = 0;
-                    for i in 0..3 {
-                        RESULTS[i] = buf[i] as u32;
-                    }
+        match adc
+            .read_sequence_dma(&mut dma, &chs, &samples, &mut buf)
+            .await
+        {
+            Ok(()) => unsafe {
+                ERR = 0;
+                for i in 0..3 {
+                    RESULTS[i] = buf[i] as u32;
                 }
-            }
+            },
             Err(e) => unsafe {
                 ERR = match e {
                     embassy_cw32::adc::AdcError::Timeout => 1,
