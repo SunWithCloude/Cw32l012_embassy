@@ -173,3 +173,7 @@ required-features = ["rt", "cw32l012"]
 [[example]]
 name = "dma_mem2mem_f030"
 required-features = ["rt", "cw32f030"]
+
+[[example]]
+name = "adc_dma_f030"
+required-features = ["rt", "cw32f030"]

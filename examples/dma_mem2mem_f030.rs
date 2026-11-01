@@ -95,10 +95,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
     loop {
         // SRC 在 FLASH、DST 在 SRAM：dma_mem2mem P1 的同款通路
         let dst = unsafe {
-            core::slice::from_raw_parts_mut(
-                core::ptr::addr_of_mut!(DST) as *mut u32,
-                SRC.len(),
-            )
+            core::slice::from_raw_parts_mut(core::ptr::addr_of_mut!(DST) as *mut u32, SRC.len())
         };
         match dma.mem_to_mem(&SRC, dst).await {
             Ok(()) => unsafe { P1_ERR = 0 },
