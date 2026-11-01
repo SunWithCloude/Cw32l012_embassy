@@ -32,6 +32,18 @@
   互相污染；`wait_edge` 的 NVIC 表补 bank 4/5。
 - `bsp_pin!`/BSP 引脚表随 PAC 回填解锁 gpiob+（cw32-bsp 6a6b773/4c4218b）。
 
+- `rtc` 模块（L012 先行）：异步闹钟（`wait_alarm`，KEY 解锁序列包进
+  critical-section——IRQ 与任务共享 KEY 状态机的必要加固）、日历读写
+  （`now`/`set_datetime`）、LSE/LSI 时基（LSI 精度实测结论入文档）。
+  `wdt` 模块：IWDT/WWDGT 薄封装（窗口配置求解器 `for_feed_interval`），
+  选择建议表入文档。16 项宿主测试。
+- `dma` 模块（L012 先行）：4 通道异步 DMA（IRQ9 DMA12/IRQ10 DMA34 共享
+  向量，单发 IER 纪律），`mem_to_mem`/`periph_to_mem`/`mem_to_periph`
+  便捷入口 + `adc.read_sequence_dma()`（IER.DMAEOS + ADC1_SEQ 触发——
+  ⚠ 阻塞版实机配方为单次路径的推广，首次上板核对缓冲内容）。经典组
+  DMA 为不同 IP（6 通道、4bit 打包 ISR、无 remaining 回读），保持
+  L012 独占。
+
 ### 变更
 
 - 门控写规范：经典组 AH BEN/APBEN 无 KEY（modify 读改写）；L012 代组
