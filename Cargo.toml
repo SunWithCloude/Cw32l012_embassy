@@ -165,3 +165,7 @@ required-features = ["rt", "cw32l012"]
 [[example]]
 name = "dac_adc_loop"
 required-features = ["rt", "cw32l012"]
+
+[[example]]
+name = "dma_mem2mem_f030"
+required-features = ["rt", "cw32f030"]
