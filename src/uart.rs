@@ -10,6 +10,19 @@
 //! | UART1 | PA02=TXD / PA03=RXD（AF1）     |
 //! | UART2 | PA07=TXD / PA06=RXD（AF1）     |
 //! | UART3 | PA04=TXD / PA05=RXD（AF1）     |
+//!
+//! # DMA 收发（L012，单次全量搬运；语义级实现待实板验证）
+//!
+//! [`Uart::write_dma`]/[`Uart::read_dma`] 用 [`crate::dma`] 的通道抽象一次
+//! 搬完整段缓冲：发送 mem→TDR、接收 RDR→mem，硬件触发 UARTx_TX/UARTx_RX
+//! （表 8-8）。**DMA 模式与逐字节/Buffered 管道模式互斥**——同一实例同时
+//! 只能用一种传输方式（三套方式的 IER/CR2 状态机互不感知，混用前先让
+//! 另一方式收尾）。
+//!
+//! ⚠ 诚实标注：阻塞版 cw32l012-hal 没有 UART/SPI 的 DMA 实机配方，本实现
+//! 按 PAC `dma::hs` 触发表（表 8-8）+ 厂商库 `UART_TransmitDMA`/
+//! `UART_ReceiveDMA`/`UART_DMACmd`（cw32l012_uart.c/.h）的位面与次序编写，
+//! **语义级实现待实板验证**。
 
 use core::future::poll_fn;
 use core::task::Poll;
@@ -875,6 +888,123 @@ fn buffered_tx_drain(idx: usize, regs: &'static crate::Uart) {
         // 排空完毕：关 TXBE、清活跃标记（TC 稍后到点唤醒 flush）
         regs.ier.modify(|v| v & !ub::ISR_TXBE);
         TX_ACTIVE[idx].store(false, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+// ================= DMA 收发（L012，单次全量搬运；语义级实现待实板验证） =================
+// 位面与次序按厂商库 cw32l012_uart.c 编写（阻塞版 HAL 无 UART DMA 配方）：
+// 先配 DMA 通道（EN=1）再开外设侧 DMA 请求，TC 后关请求——与厂商
+// UART_TransmitDMA/UART_ReceiveDMA 的顺序一致。
+
+/// UART DMA 请求使能位与触发源选择（L012）
+///
+/// PAC 位定义未收编 UART 的 DMA 使能位——按厂商库补录：cw32l012_uart.h
+/// `UART_DMAReq_Tx = 0x0080`（CR2[7]）/ `UART_DMAReq_Rx = 0x0040`（CR2[6]），
+/// `UART_DMACmd()` 把它们写进 `UARTx->CR2`（手册 §21 UART 寄存器组）。
+#[cfg(feature = "cw32l012")]
+mod udma {
+    /// DMA 发送请求使能（CR2[7]，厂商库 UART_DMAReq_Tx）
+    pub const CR2_DMATX: u32 = 1 << 7;
+    /// DMA 接收请求使能（CR2[6]，厂商库 UART_DMAReq_Rx）
+    pub const CR2_DMARX: u32 = 1 << 6;
+
+    /// 发送方向硬件触发源（表 8-8 / 厂商库 DMA_TRIGGER_SRC_UARTx_TX）
+    pub fn tx_hs(idx: usize) -> u8 {
+        match idx {
+            0 => crate::pac::dma::hs::UART1_TX,
+            1 => crate::pac::dma::hs::UART2_TX,
+            _ => crate::pac::dma::hs::UART3_TX,
+        }
+    }
+
+    /// 接收方向硬件触发源（表 8-8 / 厂商库 DMA_TRIGGER_SRC_UARTx_RX）
+    pub fn rx_hs(idx: usize) -> u8 {
+        match idx {
+            0 => crate::pac::dma::hs::UART1_RX,
+            1 => crate::pac::dma::hs::UART2_RX,
+            _ => crate::pac::dma::hs::UART3_RX,
+        }
+    }
+}
+
+#[cfg(feature = "cw32l012")]
+impl Uart {
+    /// DMA 发送：整段 buf 搬进 TDR（单次全量搬运，占用 DMA 通道 2）
+    ///
+    /// 触发源 UARTx_TX（TXBE"发送缓冲空"事件，表 8-8）；mem→periph：
+    /// 源自增、TDR 固定、8bit、BLOCK——厂商库 UART_TransmitDMA 同款位面。
+    /// 次序：通道 `configure`（EN=1）→ 置 `CR2.DMATX`（空闲时 TXBE 已
+    /// 置位，首个请求立即到）→ `wait` 等 DMA TC → 关 `CR2.DMATX`。
+    ///
+    /// DMA TC = 全部字节已写入 TDR；此时行上最后一字节可能仍在移位，
+    /// 要等物理发完再收尾（如半双工转向）的调用方随后
+    /// `embedded_io_async::Write::flush`（等 ISR.TC）。
+    ///
+    /// **与逐字节/Buffered 模式互斥**（见模块文档）；空缓冲或 >65535
+    /// 字节返回 [`crate::dma::DmaError::BadLength`]。⚠ 语义级实现待实板
+    /// 验证。
+    pub async fn write_dma(
+        &mut self,
+        dma: &mut crate::dma::Dma,
+        buf: &[u8],
+    ) -> Result<(), crate::dma::DmaError> {
+        if buf.is_empty() || buf.len() > 0xFFFF {
+            return Err(crate::dma::DmaError::BadLength);
+        }
+        let cfg = crate::dma::Config::mem_to_periph(
+            buf.as_ptr() as u32,
+            core::ptr::addr_of!(self.regs.tdr) as u32,
+            buf.len() as u16,
+            crate::dma::Width::B8,
+            udma::tx_hs(self.idx),
+        );
+        let mut ch = dma.channel(2);
+        ch.configure(&cfg); // EN=1，等 TXBE 请求
+        self.regs.cr2.modify(|v| v | udma::CR2_DMATX);
+        let r = ch.wait().await;
+        self.regs.cr2.modify(|v| v & !udma::CR2_DMATX);
+        ch.stop(); // 收尾同 ADC 序列 DMA：通道 EN 清零防残留请求
+        r
+    }
+
+    /// DMA 接收：恰好收满 buf.len() 字节（单次全量搬运，占用 DMA 通道 1）
+    ///
+    /// 触发源 UARTx_RX（RC"接收完成"事件，表 8-8）；periph→mem：RDR 固定、
+    /// 目的自增、8bit、BLOCK——厂商库 UART_ReceiveDMA 同款位面。启动前清
+    /// 残留 RC 与错误标志（R1W0：对应位写 0），保证触发请求从干净电平
+    /// 开始——启动前已到达但未被读走的字节会被丢弃。
+    ///
+    /// DMA 路径不逐字节上报接收错误（FE/PE/NE/ORE 只置 ISR，不影响搬运）；
+    /// 需要错误感知的收流用逐字节 `read_byte`/`Read::read`。
+    ///
+    /// **与逐字节/Buffered 模式互斥**（见模块文档）；空缓冲或 >65535
+    /// 字节返回 [`crate::dma::DmaError::BadLength`]。⚠ 语义级实现待实板
+    /// 验证。
+    pub async fn read_dma(
+        &mut self,
+        dma: &mut crate::dma::Dma,
+        buf: &mut [u8],
+    ) -> Result<(), crate::dma::DmaError> {
+        if buf.is_empty() || buf.len() > 0xFFFF {
+            return Err(crate::dma::DmaError::BadLength);
+        }
+        // 清残留 RC + 错误位（R1W0：写 0 清除，其余位写 1 无动作）
+        let isr_clear = ub::ICR_NONE & !(ub::ISR_RC | ub::ERR_ALL);
+        self.regs.icr.write(isr_clear);
+        let cfg = crate::dma::Config::periph_to_mem(
+            core::ptr::addr_of!(self.regs.rdr) as u32,
+            buf.as_mut_ptr() as u32,
+            buf.len() as u16,
+            crate::dma::Width::B8,
+            udma::rx_hs(self.idx),
+        );
+        let mut ch = dma.channel(1);
+        ch.configure(&cfg); // EN=1，等 RC 请求
+        self.regs.cr2.modify(|v| v | udma::CR2_DMARX);
+        let r = ch.wait().await;
+        self.regs.cr2.modify(|v| v & !udma::CR2_DMARX);
+        ch.stop();
+        r
     }
 }
 
