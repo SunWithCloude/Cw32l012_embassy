@@ -600,7 +600,7 @@ mod classic {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[repr(u32)]
-    pub enum ClassicClk {
+pub enum ClassicClk {
         Div1 = 0,
         Div2 = 1,
         Div4 = 2,
@@ -622,7 +622,7 @@ mod classic {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[repr(u32)]
-    pub enum ClassicSampleTime {
+pub enum ClassicSampleTime {
         S5 = 0,
         S6 = 1,
         S8 = 2,
@@ -638,7 +638,7 @@ mod classic {
     /// 转换通道（§22.5.1 表 22-5，CR1.CHMUX / SQR.SQRy 4bit 编码）
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub enum ClassicChannel {
+pub enum ClassicChannel {
         /// 外部引脚通道 AIN0..=AIN12：
         /// 0..7=PA00..PA07、8..10=PB00..PB02、11=PB10、12=PB11
         In(u8),
@@ -667,7 +667,7 @@ mod classic {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[repr(u32)]
-    pub enum ClassicVref {
+pub enum ClassicVref {
         /// BGR 1.5V（VDDA 1.8~2V 档）
         Bgr1p5 = 0,
         /// BGR 2.5V（厂商库 ADC_StructInit 默认）
@@ -683,7 +683,7 @@ mod classic {
     /// SensorDead/BadCalibration）
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub enum ClassicAdcError {
+pub enum ClassicAdcError {
         /// 转换未在 10ms 内完成（时钟门控没开 / ADCCLK 超频？）
         Timeout,
         /// 配置非法（外部通道号 >12 / 序列长度 0 或 >4 / out 缓冲不足）
@@ -696,7 +696,7 @@ mod classic {
     #[allow(missing_docs)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub enum ClassicTrig {
+pub enum ClassicTrig {
         /// ATIM（仅 `cw32f030`——f020 无高级定时器，TRIGGER 无 bit0）
         #[cfg(feature = "cw32f030")]
         Atim,
@@ -954,7 +954,8 @@ mod classic {
     }
 
     /// 经典组 ADC 中断标记（IRQ12，f030/f020 同号）
-    pub struct ClassicAdcIrq;
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ClassicAdcIrq;
     impl IrqHandler<interrupt::ADC> for ClassicAdcIrq {
         fn call() {
             on_irq(unsafe { &*(pac::ADC_BASE as *const pac::ADC) });
