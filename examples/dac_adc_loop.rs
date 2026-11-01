@@ -75,7 +75,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
             Timer::after_micros(50).await;
             match adc.read(AdcChannel::In(12), SampleCycles::S24).await {
                 Ok(raw) => {
-                    let err = if raw > set { raw - set } else { set - raw };
+                    let err = raw.abs_diff(set);
                     unsafe {
                         if err as u32 > MAX_ERR {
                             MAX_ERR = err as u32;

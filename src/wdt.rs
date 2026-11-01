@@ -82,7 +82,7 @@ pub fn calc_timeout(t: TimeoutMs) -> Result<(u32, u16), TimeoutError> {
     // 每档分频下的最小超时（ARR=1）与最大超时（ARR=0xFFF）
     for (code, div) in [4u64, 8, 16, 32, 64, 128, 256, 512].iter().enumerate() {
         // ticks = ceil(ms × RC10K / 1000 / div)（整体向上取整，保证不短于请求值）
-        let ticks = (ms * wd::RC10K_HZ as u64 + 1000 * div - 1) / (1000 * div);
+        let ticks = (ms * wd::RC10K_HZ as u64).div_ceil(1000 * div);
         if ticks >= 2 && ticks <= wd::ARR_MAX as u64 {
             return Ok((code as u32, (ticks - 1) as u16));
         }
@@ -195,7 +195,7 @@ impl WindowConfig {
         let tick = tick_ns(pclk_hz, prs);
         // WCNT：ceil(interval / tick) 个 tick 后到 0x3F → T_max ≥ interval；
         // 至少 2 tick（保证 WINR < WCNT 有解）
-        let mut wc_ticks = ((interval_ns + tick - 1) / tick) as u32;
+        let mut wc_ticks = interval_ns.div_ceil(tick) as u32;
         if wc_ticks < 2 {
             wc_ticks = 2;
         }

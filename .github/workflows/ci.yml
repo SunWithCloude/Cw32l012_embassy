@@ -18,9 +18,13 @@ jobs:
       - uses: actions/checkout@v4
 
       # cw32l012-pac 尚未发布到 crates.io：按目录名克隆到上一级，
-      # 让 `path = "../cw32l012-pac"` 依赖成立。
-      - name: Checkout cw32l012-pac (sibling path dependency)
-        run: git clone --depth 1 https://github.com/SunWithCloude/Cw32l012_pac.git "$GITHUB_WORKSPACE/../cw32l012-pac"
+      # 让 `path = "../cw32l012-pac"` 依赖成立。cw32-pacs 同理——Cargo
+      # 解析全量依赖图时要求所有 path 依赖（含 feature 门控的可选家族
+      # PAC）的 manifest 在盘上，缺一个整个 job 在 resolve 阶段就死。
+      - name: Checkout sibling path dependencies
+        run: |
+          git clone --depth 1 https://github.com/SunWithCloude/Cw32l012_pac.git "$GITHUB_WORKSPACE/../cw32l012-pac"
+          git clone --depth 1 https://github.com/SunWithCloude/cw32-pacs.git "$GITHUB_WORKSPACE/../cw32-pacs"
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -93,8 +97,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Checkout cw32l012-pac (sibling path dependency)
-        run: git clone --depth 1 https://github.com/SunWithCloude/Cw32l012_pac.git "$GITHUB_WORKSPACE/../cw32l012-pac"
+      - name: Checkout sibling path dependencies
+        run: |
+          git clone --depth 1 https://github.com/SunWithCloude/Cw32l012_pac.git "$GITHUB_WORKSPACE/../cw32l012-pac"
+          git clone --depth 1 https://github.com/SunWithCloude/cw32-pacs.git "$GITHUB_WORKSPACE/../cw32-pacs"
 
       - uses: dtolnay/rust-toolchain@stable
 

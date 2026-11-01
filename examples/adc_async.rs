@@ -61,7 +61,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
     loop {
         // VDDA（内部基准通道，自动处理 BGREN 稳定期）
         if let Ok(mv) = adc.vdda_mv().await {
-            unsafe { RESULTS[0] = mv as u32 };
+            unsafe { RESULTS[0] = mv };
         }
         // PA0 外部通道（悬空读数不定，验证通路本身）
         if let Ok(raw) = adc.read(AdcChannel::In(0), SampleCycles::S24).await {

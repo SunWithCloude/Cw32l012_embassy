@@ -268,7 +268,7 @@ impl GtimPwm {
             return Err(PwmError::BadDuty);
         }
         let arr = self.regs.arr.read() & 0xFFFF;
-        let ccr = ((arr as u32 + 1) * duty_bp as u32 / 10_000) as u16;
+        let ccr = ((arr + 1) * duty_bp as u32 / 10_000) as u16;
         self.set_ccr(ccr);
         Ok(())
     }
@@ -282,7 +282,7 @@ impl GtimPwm {
             PwmChannel::Ch3 => self.regs.ccr3.read(),
             PwmChannel::Ch4 => self.regs.ccr4.read(),
         } & 0xFFFF;
-        (((ccr as u32) * 10_000) / (arr as u32 + 1)) as u16
+        ((ccr * 10_000) / (arr + 1)) as u16
     }
 
     /// 当前计数值（观测 CNT 在 0..ARR 间滚动 = PWM 在跑）
