@@ -92,6 +92,7 @@ fn clear_update_flag(regs: &pac::Gtim) {
 /// PWM 通道
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PwmChannel {
     Ch1,
     Ch2,
@@ -101,6 +102,7 @@ pub enum PwmChannel {
 
 /// PWM 配置（构造参数）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PwmConfig {
     /// 输出通道（须与引脚的 AF 复用通道一致，表 9-2）
     pub channel: PwmChannel,
@@ -112,6 +114,7 @@ pub struct PwmConfig {
 
 /// PWM 配置错误（语义同阻塞版 gtim::PwmError）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PwmError {
     /// 频率超出可实现范围（f > PCLK/2 或 f < PCLK/65536²）
     OutOfRange,

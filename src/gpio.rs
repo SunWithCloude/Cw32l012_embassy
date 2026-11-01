@@ -394,6 +394,7 @@ impl<P: GpioPort> Pin<P> {
 /// ⚠ 下拉仅 PF3 有实际电阻（L012 手册 §9.6.3），其余引脚
 /// [`Pull::Down`] 等同 [`Pull::None`]。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Pull {
     /// 浮空
     None,
@@ -405,6 +406,7 @@ pub enum Pull {
 
 /// 输出电平
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Level {
     /// 低电平
     Low,

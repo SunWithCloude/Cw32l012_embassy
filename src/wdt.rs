@@ -61,10 +61,12 @@ use crate::pac::wwdt as ww;
 
 /// 看门狗超时（毫秒；同阻塞版 `wdt::TimeoutMs`）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TimeoutMs(pub u32);
 
 /// 看门狗配置错误（超时不可实现）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TimeoutError;
 
 /// 计算能覆盖 `TimeoutMs` 的最小分频组合（PRS 分频、ARR）
@@ -151,6 +153,7 @@ impl Iwdt {
 /// 窗口配置（由 [`WindowConfig::for_feed_interval`] 生成或手工构造；
 /// 同阻塞版 `wwdt::WindowConfig`）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct WindowConfig {
     /// 预分频 PRS[0..7]：计数时钟 = PCLK / 4096 / 2^PRS
     pub prs: u8,
@@ -162,6 +165,7 @@ pub struct WindowConfig {
 
 /// 喂狗错误（同阻塞版 `wwdt::FeedError`）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum FeedError {
     /// 当前计数值仍在窗口值之上（喂得太早，真写会触发复位）
     TooEarly,

@@ -51,6 +51,17 @@
 //!     GPIOA => gpio::GpioAIrq;
 //! });
 //! ```
+//!
+//! ## Cargo features
+//!
+//! - 家族选择（互斥、必选其一）：`cw32l012` / `cw32l010` / `cw32l011` /
+//!   `cw32f030` / `cw32f020` / `cw32f003` / `cw32l031` / `cw32l052` /
+//!   `cw32l083` / `cw32r031` / `cw32w031`
+//! - `rt`：透传所选家族 PAC 的 `cortex-m-rt` 向量表
+//! - `critical-section-impl`：PRIMASK 关中断的 critical-section 实现
+//!   （单核 M0+，一个固件只能有一个实现）
+//! - `defmt`：驱动错误/配置类型 derive `defmt::Format`（配合 defmt-rtt，
+//!   见 `rtt_hello` 示例）
 
 #![no_std]
 #![allow(rustdoc::broken_intra_doc_links)]

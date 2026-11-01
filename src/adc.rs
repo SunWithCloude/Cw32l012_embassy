@@ -56,6 +56,7 @@ use ab::raw;
 /// ADC 时钟分频（ADCCLK = PCLK / N）
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum AdcClk {
     Div1 = 0,
@@ -67,6 +68,7 @@ pub enum AdcClk {
 /// 采样周期档位（表 25-2，单位 ADCCLK）
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum SampleCycles {
     S6 = 0,
@@ -89,6 +91,7 @@ pub enum SampleCycles {
 
 /// 转换通道（表 25-4）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AdcChannel {
     /// 外部引脚 / 内部信号（0..=13，映射见模块文档）
     In(u8),
@@ -110,6 +113,7 @@ impl AdcChannel {
 
 /// ADC 错误
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AdcError {
     /// 转换未在 10ms 内完成（时钟门控没开 / 序列没启动？）
     Timeout,

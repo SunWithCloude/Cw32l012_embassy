@@ -76,6 +76,7 @@ pub use crate::pac::rtc::{IRQ_ALARMA, IRQ_ALARMB, IRQ_AWTIMER, IRQ_INTERVAL, IRQ
 /// RTC 时钟源（CR1.SOURCE[10:8]，§13.5）
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum RtcClock {
     /// 外部 32.768kHz 晶体（最准；无晶振时起振等待超时）
     Lse,
@@ -97,6 +98,7 @@ impl RtcClock {
 
 /// 日期时间（BCD 语义，字段是**十进制值**，模块内部转 BCD；同阻塞版结构体）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DateTime {
     /// 年 0..=99（20xx）
     pub year: u8,
@@ -132,6 +134,7 @@ impl DateTime {
 /// 例：`Alarm { hour: None, minute: None, second: Some(10), weekmask: 0x7F }`
 /// 表示"每分钟的第 10 秒"。
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Alarm {
     /// 星期掩码：bit0=周日、bit1..=6=周一..周六；0x7F = 每天都响
     pub weekmask: u8,
@@ -166,6 +169,7 @@ impl Alarm {
 
 /// RTC 错误（语义同阻塞版 `rtc::RtcError`）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum RtcError {
     /// 时钟源未就绪（LSE 未起振 / LSI 未稳定）
     ClockNotReady,

@@ -44,6 +44,7 @@ use embassy_sync::waitqueue::AtomicWaker;
 
 /// I2C 速率
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Speed {
     /// 标准模式 100 kHz
     Standard100k,
@@ -53,6 +54,7 @@ pub enum Speed {
 
 /// I2C 配置
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Config {
     /// 速率档位
     pub speed: Speed,
@@ -85,6 +87,7 @@ mod l012 {
 
     /// I2C 错误
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum I2cError {
         /// 地址或数据被 NACK
         Nack,
@@ -515,6 +518,7 @@ mod f030 {
 
     /// I2C 错误（经典家族）
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum I2cError {
         /// 地址或数据被 NACK（STAT 0x20/0x30/0x48）
         Nack,

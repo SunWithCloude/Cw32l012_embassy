@@ -159,6 +159,7 @@ pub(crate) mod ub {
 
 /// UART 配置（固定 8-N-1）
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Config {
     /// 波特率
     pub baudrate: u32,
@@ -172,6 +173,7 @@ impl Default for Config {
 
 /// UART 错误
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum UartError {
     /// 接收溢出
     Overrun,

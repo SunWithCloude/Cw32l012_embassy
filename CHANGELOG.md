@@ -43,6 +43,10 @@
   ⚠ 阻塞版实机配方为单次路径的推广，首次上板核对缓冲内容）。经典组
   DMA 为不同 IP（6 通道、4bit 打包 ISR、无 remaining 回读），保持
   L012 独占。
+- `defmt` feature（库级日志支持）：开启后各驱动公共错误/配置类型 derive
+  `defmt::Format`（uart/spi/i2c/adc/dma/timer/rtc/wdt/gpio；dac 待合并后
+  补一行），默认关闭、关闭时零开销；`rtt_hello` 示例（defmt-rtt +
+  panic-probe）形成端到端日志链路。
 
 ### 变更
 

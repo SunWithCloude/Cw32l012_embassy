@@ -30,6 +30,8 @@ cw32r031-pac = { path = "../cw32-pacs/crates/cw32r031-pac", optional = true }
 cw32w031-pac = { path = "../cw32-pacs/crates/cw32w031-pac", optional = true }
 cw32l083-pac = { path = "../cw32-pacs/crates/cw32l083-pac", optional = true }
 critical-section = { version = "1.2", features = ["restore-state-u8"] }
+# 日志格式层（feature `defmt` 开启时驱动错误/配置类型 derive defmt::Format）
+defmt = { version = "1", optional = true, default-features = false }
 embassy-sync = "0.8"
 embassy-time = "0.5"
 # 时间驱动固定 1MHz tick（与 embassy-time 默认 tick-hz-1_000_000 一致）
@@ -47,6 +49,9 @@ default = ["critical-section-impl", "cw32l012"]
 # 一个固件只能有一个实现：不要与 cw32l012-hal 的 critical-section-impl
 # 或 cortex-m 的实现同时启用（链接冲突）。
 critical-section-impl = []
+# defmt 支持：错误/配置类型 derive `defmt::Format`（配合 defmt-rtt，
+# 见 examples/rtt_hello）
+defmt = ["dep:defmt"]
 # 家族选择(互斥):cw32l012/cw32l010/cw32l011 = L012 代外设(KEY 写保护 +
 # UART 错误位 8..11 + APBEN1 布局);cw32f030/cw32f020/cw32f003/cw32l031/
 # cw32l052/cw32l083/cw32r031/cw32w031 = 经典代(无 KEY + 错误位 3/4 +

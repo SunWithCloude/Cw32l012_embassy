@@ -80,6 +80,7 @@ use crate::pac::dma as dc;
 /// 传输数据位宽（`CSR.SIZE`，§8.8；同时决定地址自增量 1/2/4 字节）
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Width {
     B8 = 0,
@@ -113,6 +114,7 @@ impl Width {
 
 /// 传输模式（`CSR.TRANS`，§8.8 表 8-1）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Mode {
     /// 块传输：每搬完一个数据块插入传输间隙，允许 CPU / 高优先级通道抢占
     Block,
@@ -122,6 +124,7 @@ pub enum Mode {
 
 /// 触发方式（`TRIG.TYPE` + `TRIG.HARDSRC`，§8.8 表 8-8）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Trigger {
     /// 软件触发：由 [`Channel::start`] 写 `SOFTSRC` 启动
     Software,
@@ -131,6 +134,7 @@ pub enum Trigger {
 
 /// 通道配置（对应手册 §8.4.1 的步骤 1~12）
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Config {
     /// 源地址（不得指向 DMA/FLASH/RAM 控制器自己的寄存器，§8.8.6 注）
     pub src: u32,
@@ -261,6 +265,7 @@ impl Config {
 
 /// DMA 错误（语义同阻塞版 `dma::DmaError`）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DmaError {
     /// 通道号非法（应为 1..=4）
     BadChannel,

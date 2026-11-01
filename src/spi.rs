@@ -141,6 +141,7 @@ use fam as f;
 
 /// SPI 配置
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Config {
     /// 目标 SCK 频率（自动取不超过该值的 2^n 分频）
     pub frequency: u32,
@@ -152,6 +153,7 @@ pub struct Config {
 
 /// SPI 时序模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Mode {
     /// CPOL=0 CPHA=0
     Mode0,
