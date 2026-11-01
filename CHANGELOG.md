@@ -26,6 +26,12 @@
 - F003 的 I2C（经典状态机同构，中断名 `I2C` 无数字）、l083 的共享向量
   命名（GPIOC_GPIOD / GPIOE_GPIOF / UART1_UART4 等）接入。
 
+- **GPIO 全端口接线（l052/l083）**：PAC 实例回填带来的 GPIOD/GPIOE 已接入
+  embassy——共享向量 handler 成对派发（`GPIOC_GPIOD` 服务 C+D、
+  `GPIOE_GPIOF` 服务 E+F），waker/触发位图 bank 扩为 6 槽避免同 pin 位
+  互相污染；`wait_edge` 的 NVIC 表补 bank 4/5。
+- `bsp_pin!`/BSP 引脚表随 PAC 回填解锁 gpiob+（cw32-bsp 6a6b773/4c4218b）。
+
 ### 变更
 
 - 门控写规范：经典组 AH BEN/APBEN 无 KEY（modify 读改写）；L012 代组
