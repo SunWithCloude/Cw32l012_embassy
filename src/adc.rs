@@ -42,6 +42,9 @@ pub(crate) mod ab {
     pub const IER_EOC: u32 = 1 << 0;
     /// EOS 中断使能（IER bit1）
     pub const IER_EOS: u32 = 1 << 1;
+    /// EOS 触发 DMA 请求（IER bit6，PAC 有定义；序列 DMA 配套——
+    /// 阻塞版 TESTING.md 坑 5：序列配 DMAEOS+ADC1_SEQ、单次配 DMAEOC+ADC1_SINGLE）
+    pub const IER_DMAEOS: u32 = crate::pac::adc::IER_DMAEOS;
     /// BGR 控制器 BGREN（复位默认已开，BGR_CR=0x105）
     pub const BGREN: u32 = crate::pac::bgr::CR_BGREN;
     /// BGR 控制器 TSEN
@@ -279,6 +282,113 @@ impl Adc {
         }
         regs.icr.write(raw::ICR_CLEAR_EOC_EOS);
         regs.cr.modify(|v| v & !raw::CR_ENS_MASK); // 恢复单通道模式
+        Ok(())
+    }
+
+    /// 序列扫描转换（DMA 版）：整段序列的结果由 DMA 硬件触发自动搬入缓冲，
+    /// CPU 不逐通道取数（[`read_sequence`](Self::read_sequence) 的 DMA 版）
+    ///
+    /// * `dma` — DMA 控制器（内部占用**通道 1**，与阻塞版 dma_demo 给
+    ///   ADC 的选路一致；HARDSRC 与通道号无关，任一通道皆可接 ADC 触发）
+    /// * `chs` / `samples` — 通道与采样周期（等长，2..=8 通道）
+    /// * `out` — 结果缓冲（长度 ≥ chs.len()，按通道顺序 0..4095）
+    ///
+    /// 配方（阻塞版 dma_demo P2 的序列推广 + 其 TESTING.md 坑 4/5）：
+    ///
+    /// - 触发链：序列完成（EOS）→ ADC 发 DMA 请求（`IER.DMAEOS`，bit6）→
+    ///   HARDSRC = `ADC1_SEQ`/`ADC2_SEQ`（表 8-8：序列配 SEQ、单次配
+    ///   SINGLE，两者别配错——阻塞版 TESTING.md 坑 5）。
+    /// - 一次请求搬一整块：`CNT=1`、`REPEAT=n`（§8 数据块模型：一次硬件
+    ///   请求搬一个数据块 = REPEAT 个元素；n ≤ 8 ≤ REPEAT 上限 15）。
+    /// - 32 位宽 + 源自增：结果寄存器 RESULT0..7 @ +0x30..+0x4C 步进 4
+    ///   字节（表 25-7），16 位宽的自增量 2 字节对不上——阻塞版 TESTING.md
+    ///   坑 4「要么配 32bit，要么用 REPEAT 整块搬」，此处两者同用。
+    ///
+    /// 每个结果落在暂存 u32 的低 12 位（RESULT[11:0]），紧凑成 u16 写入
+    /// `out`。⚠ 序列路径（DMAEOS + REPEAT 整块）在阻塞版只做过单次/连续
+    /// 路径（DMAEOC + ADC1_SINGLE）的实机验证，首次上板请核对缓冲内容。
+    pub async fn read_sequence_dma(
+        &mut self,
+        dma: &mut crate::dma::Dma,
+        chs: &[AdcChannel],
+        samples: &[SampleCycles],
+        out: &mut [u16],
+    ) -> Result<(), AdcError> {
+        let n = chs.len();
+        if n == 0 || n > 8 || samples.len() != n || out.len() < n {
+            return Err(AdcError::UnsupportedChannel);
+        }
+        let any_ts = chs.iter().any(|c| matches!(c, AdcChannel::TempSensor));
+        if self.idx == 1 && (any_ts || chs.iter().any(|c| matches!(c, AdcChannel::Bgr1v2))) {
+            return Err(AdcError::UnsupportedChannel);
+        }
+        self.ensure_internal_ready(any_ts).await;
+        let regs = self.regs;
+        let mut sqrcfr = 0u32;
+        let mut sample = 0u32;
+        for (i, ch) in chs.iter().enumerate() {
+            sqrcfr |= ch.code() << (4 * i);
+            sample |= (samples[i] as u32) << (4 * i);
+        }
+
+        // 暂存缓冲：每个结果寄存器 32 位读出（低 12 位有效），DMA 整块
+        // 写入后紧凑成 u16；栈上 [u32; 8] 天然 4 字节对齐
+        let mut stage = [0u32; 8];
+
+        // 通道配置：源 = RESULT0（随 SRCINC 逐结果寄存器推进）、CNT=1 +
+        // REPEAT=n（一次 EOS 请求整块搬）、B32、BULK、硬件触发 ADCx_SEQ
+        let (base, hs) = match self.idx {
+            0 => (pac::ADC1_BASE, crate::pac::dma::hs::ADC1_SEQ),
+            _ => (pac::ADC2_BASE, crate::pac::dma::hs::ADC2_SEQ),
+        };
+        let cfg = crate::dma::Config {
+            src: base as u32 + 0x30, // RESULT0（表 25-7）
+            dst: stage.as_mut_ptr() as u32,
+            len: 1,
+            repeat: n as u8,
+            width: crate::dma::Width::B32,
+            mode: crate::dma::Mode::Bulk,
+            trigger: crate::dma::Trigger::Hardware(hs),
+            src_inc: true,
+            dst_inc: true,
+            src_reload: false,
+            dst_reload: false,
+            restart: false,
+        };
+        let mut dch = dma.channel(1);
+        dch.configure(&cfg); // EN=1，等 EOS 请求
+
+        // 配序列（同 read_sequence 步骤）→ 开序列 DMA 请求 → 启动
+        regs.start.write(0); // 复位序列
+        regs.sqrcfr.write(sqrcfr);
+        regs.sample.write(sample);
+        regs.icr.write(raw::ICR_CLEAR_EOC_EOS);
+        regs.cr
+            .modify(|v| (v & !raw::CR_ENS_MASK) | ((n as u32 - 1) << raw::CR_ENS_POS));
+        regs.ier.modify(|v| v | ab::IER_DMAEOS);
+        regs.start.write(raw::START);
+
+        // 序列时长上限：8 通道 × 最长采样 518+12 ADCCLK ≈ 4.3k ADCCLK，
+        // 最低速 ADCCLK（PCLK/8@4MHz = 500kHz）下 ≈ 8.6ms，取 20ms 裕量
+        //（read_sequence 的单通道 10ms 档对 8 通道贴边，这里放宽）。
+        // DMA 侧错误（TE/中止）与超时一并归入 Timeout：序列结果没到位
+        let r = match with_timeout(Duration::from_millis(20), dch.wait()).await {
+            Ok(Ok(())) => Ok(()),
+            _ => Err(AdcError::Timeout),
+        };
+
+        // 收尾：关序列 DMA 请求、停序列、恢复单通道模式、停 DMA 通道
+        regs.ier.modify(|v| v & !ab::IER_DMAEOS);
+        regs.start.write(0);
+        regs.cr.modify(|v| v & !raw::CR_ENS_MASK);
+        regs.icr.write(raw::ICR_CLEAR_EOC_EOS);
+        dch.stop();
+
+        r?;
+        // DMA 已完成（TC 后读 SRAM；单核 M0+ 无缓存，阻塞版 dma_demo 同款直读）
+        for (slot, v) in out.iter_mut().zip(stage.iter()) {
+            *slot = (v & 0xFFF) as u16;
+        }
         Ok(())
     }
 

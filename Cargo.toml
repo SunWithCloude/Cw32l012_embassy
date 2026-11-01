@@ -127,3 +127,11 @@ required-features = ["rt", "cw32l012"]
 [[example]]
 name = "rtt_hello"
 required-features = ["rt", "cw32l012"]
+
+[[example]]
+name = "dma_mem2mem"
+required-features = ["rt", "cw32l012"]
+
+[[example]]
+name = "adc_dma"
+required-features = ["rt", "cw32l012"]
