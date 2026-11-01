@@ -68,24 +68,13 @@ use crate::interrupt::{IrqHandler, interrupt};
 use crate::pac;
 
 // ================= 位常量面 =================
-// 手写 PAC 的 gtim 常量与手册 §16.10 一致（STM32 风格）。DIER.UIE 与
-// ICR 在 PAC 常量/寄存器块中缺失，此处按手册补（§16.10.4 / §16.10.6）。
+// 手写 PAC 的 gtim 常量与手册 §16.10 一致（STM32 风格）。GTIMx_ICR
+// 已建模进 PAC（`Gtim::icr` @ 0x70，R1W0）；DIER.UIE 位常量 PAC 仍未
+// 定义，此处按手册 §16.10.4 补。
 use crate::pac::gtim as gt;
 
 /// 更新中断使能（DIER bit0，§16.10.4——PAC 未定义故补）
 const DIER_UIE: u32 = 1 << 0;
-/// GTIMx_ICR 寄存器偏移（§16.10.6：BASE+0x70，R1W0）。
-/// ⚠ 手写 PAC 的 [`pac::Gtim`] 块漏建模该寄存器（复位值 0x00F0_1E5F），
-/// 经基地址偏移访问。
-const GTIM_ICR_OFFSET: usize = 0x70;
-/// 清除 UIF 的 ICR 写入值：仅 bit0 写 0（清更新标志），其余位写 1 无功能
-const ICR_CLEAR_UIF: u32 = !1;
-
-/// 清更新标志（ICR@+0x70 R1W0：bit0 写 0）
-fn clear_update_flag(regs: &pac::Gtim) {
-    let icr = (regs as *const pac::Gtim as usize + GTIM_ICR_OFFSET) as *mut u32;
-    unsafe { core::ptr::write_volatile(icr, ICR_CLEAR_UIF) }
-}
 
 // ================= PWM 配置 =================
 
@@ -337,7 +326,10 @@ impl GtimPwm {
             1 => crate::interrupt::nvic_enable::<interrupt::GTIM2>(),
             _ => crate::interrupt::nvic_enable::<interrupt::GTIM34>(),
         }
-        clear_update_flag(regs);
+        // 前置清残留 UIF：PAC `Gtim::icr`（GTIMx_ICR @ 0x70）为 R1W0——
+        // 写 0 清除对应标志、写 1 无功能，写 `!ICR_UIF` 即仅 bit0=0 清
+        // 更新标志、其余位写 1 无副作用（与原裸指针写入 0xFFFF_FFFE 逐位一致）
+        regs.icr.write(!gt::ICR_UIF);
         poll_fn(|cx| {
             GTIM_WAKER[idx].register(cx.waker());
             if regs.isr.read() & gt::ISR_UIF != 0 {
