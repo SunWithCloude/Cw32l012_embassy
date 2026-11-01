@@ -85,6 +85,10 @@
   KEY 写。以 cw32-hal2 各家族 clock sidecar 的 `enable_write_key` 元数据
   与 F030 上板实测交叉验证。
 
+- timer：GTIM 清更新标志改走 PAC 的 `Gtim::icr` 字段（cw32l012-pac 补录
+  0x70 处 ICR，§16.10.6 R1W0，厂商库 `GTIM_TypeDef` Size=116 交叉核对），
+  撤掉驱动里的裸指针偏移 hack，行为逐位一致。
+
 
 ### 新增
 
