@@ -69,7 +69,9 @@ use crate::interrupt::{IrqHandler, interrupt};
 use crate::pac;
 use crate::pac::rtc as rc;
 
-pub use crate::pac::rtc::{IRQ_ALARMA, IRQ_ALARMB, IRQ_AWTIMER, IRQ_INTERVAL, IRQ_TAMP, IRQ_TAMPOV};
+pub use crate::pac::rtc::{
+    IRQ_ALARMA, IRQ_ALARMB, IRQ_AWTIMER, IRQ_INTERVAL, IRQ_TAMP, IRQ_TAMPOV,
+};
 
 // ================= 时钟源 =================
 
@@ -420,12 +422,24 @@ impl Rtc {
 
     /// 使能/关闭闹钟 A（`CR2.ALARMAEN`）
     pub fn enable_alarm_a(&mut self, on: bool) {
-        self.write_cr2(|v| if on { v | rc::CR2_ALARMAEN } else { v & !rc::CR2_ALARMAEN });
+        self.write_cr2(|v| {
+            if on {
+                v | rc::CR2_ALARMAEN
+            } else {
+                v & !rc::CR2_ALARMAEN
+            }
+        });
     }
 
     /// 使能/关闭闹钟 B
     pub fn enable_alarm_b(&mut self, on: bool) {
-        self.write_cr2(|v| if on { v | rc::CR2_ALARMBEN } else { v & !rc::CR2_ALARMBEN });
+        self.write_cr2(|v| {
+            if on {
+                v | rc::CR2_ALARMBEN
+            } else {
+                v & !rc::CR2_ALARMBEN
+            }
+        });
     }
 
     /// 异步睡到闹钟 A 下一次匹配（IER.ALARMA 中断 + waker）

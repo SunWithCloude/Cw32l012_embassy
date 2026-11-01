@@ -82,8 +82,9 @@ async fn main(_spawner: embassy_executor::Spawner) {
     // ---- GTIM1 → TRGO 供拍（1kHz 更新；表 26-1 TSEL=0100 = GTIM1_Trgo）----
     // APBEN1.GTIM1（bit6，KEY 读改写——timer.rs 同款配方）
     let sc = p.sysctrl;
-    sc.apben1
-        .modify(|v| embassy_cw32::pac::sysctrl::KEY | (v & 0xFFFF) | embassy_cw32::pac::sysctrl::APBEN1_GTIM1);
+    sc.apben1.modify(|v| {
+        embassy_cw32::pac::sysctrl::KEY | (v & 0xFFFF) | embassy_cw32::pac::sysctrl::APBEN1_GTIM1
+    });
     let gtim1 = p.gtim1;
     gtim1.cr1.write(0); // 停止计数以便配置
     // PSC=3、ARR=999：PCLK 4MHz /(3+1)/(999+1) = 1kHz 更新
@@ -110,12 +111,10 @@ async fn main(_spawner: embassy_executor::Spawner) {
         )
         .await;
         match r {
-            Ok(Ok(())) => {
-                unsafe {
-                    ERR = 0;
-                    LAST_DOR = dac.output1() as u32;
-                }
-            }
+            Ok(Ok(())) => unsafe {
+                ERR = 0;
+                LAST_DOR = dac.output1() as u32;
+            },
             Ok(Err(DacError::DmaUnderrun)) => unsafe { ERR = 2 },
             Ok(Err(DacError::Dma(_))) => unsafe { ERR = 3 },
             Ok(Err(DacError::ValueOutOfRange)) => unsafe { ERR = 4 },

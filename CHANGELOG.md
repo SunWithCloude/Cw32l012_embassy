@@ -68,6 +68,16 @@
   （VDDA/3、温度、Vref1.2 + 出厂校准字——纠正了"经典组无内部通道"的
   先前结论，按 sha 锁定的厂商库 V2.2 配方实现）。l031 组/f003/l010/
   l011 的 ADC 为另外的 IP，排除待后续。
+- **经典组 ADC×DMA 联动**（`ClassicAdc::read_dma`，f030/f020）：硬件
+  DMA 请求线实锤——CR1.DMAEN=转换完成发 DMA 请求（手册 V2.5 §22.13.2
+  bit7；厂商库 cw32f030_adc.c:697-727 `ADC_DMACmd`），请求源 HARDSRC
+  =0x0A「ADC 转换完成」（§8.4.4 表 8-2/§8.8.4 p130/p140；厂商库
+  cw32f030_dma.h:117 `DMA_HardTrig_ADC_TRANSCOMPLETE=0x0AUL<<2`，即
+  dma.rs 既有 `hs::ADC_COMPLETE`）。路径取 MODE=1 单通道 CR2.CNT+1 次
+  有界转换（§22.5.2：每次转换完成 EOC+RESULT0、完成后 EOA+START 自清；
+  厂商库 `ADC_SingleChMoreModeCfg` cw32f030_adc.c:405-412 含强制 ACCEN
+  配方），DMA 侧 RESULT0 固定源 B16 搬入缓冲、占通道 1。序列模式不走
+  DMA：结果按序列位轮转 RESULT0..3、手册无按请求选源机制，不做推断。
 
 ### 变更
 

@@ -25,7 +25,7 @@
 #![no_std]
 #![no_main]
 
-use embassy_executor::{main, Spawner};
+use embassy_executor::{Spawner, main};
 use embassy_time::Timer;
 
 use embassy_cw32::{

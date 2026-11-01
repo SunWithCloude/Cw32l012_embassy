@@ -81,7 +81,10 @@ async fn main(_spawner: embassy_executor::Spawner) {
 
     loop {
         // 单通道单次（悬空引脚读数不定，验证通路本身）
-        match adc.read(ClassicChannel::In(0), ClassicSampleTime::S10).await {
+        match adc
+            .read(ClassicChannel::In(0), ClassicSampleTime::S10)
+            .await
+        {
             Ok(raw) => unsafe { RAW = raw as u32 },
             Err(e) => unsafe { ERR = err_code(e) },
         }

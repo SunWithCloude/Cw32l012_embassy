@@ -274,7 +274,13 @@ impl GpioPort for pac::GPIOF {
 /// 地址镜像:A=0x48000000、B=+0x400、C=+0x800、D=+0xC00、F=+0x1400;
 /// L031 系无 GPIOD 但槽位保留;l083 的 D/E 槽位实占,见下)。l052 的
 /// GPIOD 未收编进槽位表(0..3 = A/B/C/F)。
-#[cfg(any(feature = "cw32l031", feature = "cw32l052", feature = "cw32l083", feature = "cw32r031", feature = "cw32w031"))]
+#[cfg(any(
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 impl GpioPort for pac::GPIO {
     impl_port!(
         pac::GPIO,
@@ -645,11 +651,7 @@ impl<P: GpioPort> Input<P> {
                 feature = "cw32f020"
             ))]
             _ => crate::interrupt::nvic_enable::<interrupt::GPIOF>(),
-            #[cfg(any(
-                feature = "cw32l010",
-                feature = "cw32l011",
-                feature = "cw32f003"
-            ))]
+            #[cfg(any(feature = "cw32l010", feature = "cw32l011", feature = "cw32f003"))]
             _ => unreachable!("该家族无此端口"),
         }
         critical_section::with(|_| {
@@ -803,8 +805,15 @@ port_irq!(GPIOA, GpioAIrq, pac::GPIO, pac::GPIOA_BASE, 0);
 #[cfg(feature = "cw32l052")]
 port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOA_BASE + 0x400, 1);
 #[cfg(feature = "cw32l052")]
-port_irq2!(GPIOC_GPIOD, GpioCIrq, pac::GPIO,
-    pac::GPIOA_BASE + 0x800, 2, pac::GPIOA_BASE + 0xC00, 4);
+port_irq2!(
+    GPIOC_GPIOD,
+    GpioCIrq,
+    pac::GPIO,
+    pac::GPIOA_BASE + 0x800,
+    2,
+    pac::GPIOA_BASE + 0xC00,
+    4
+);
 #[cfg(feature = "cw32l052")]
 port_irq!(GPIOF, GpioFIrq, pac::GPIO, pac::GPIOA_BASE + 0x1400, 3);
 
@@ -838,8 +847,22 @@ port_irq!(GPIOA, GpioAIrq, pac::GPIO, pac::GPIOA_BASE, 0);
 #[cfg(feature = "cw32l083")]
 port_irq!(GPIOB, GpioBIrq, pac::GPIO, pac::GPIOA_BASE + 0x400, 1);
 #[cfg(feature = "cw32l083")]
-port_irq2!(GPIOC_GPIOD, GpioCIrq, pac::GPIO,
-    pac::GPIOA_BASE + 0x800, 2, pac::GPIOA_BASE + 0xC00, 4);
+port_irq2!(
+    GPIOC_GPIOD,
+    GpioCIrq,
+    pac::GPIO,
+    pac::GPIOA_BASE + 0x800,
+    2,
+    pac::GPIOA_BASE + 0xC00,
+    4
+);
 #[cfg(feature = "cw32l083")]
-port_irq2!(GPIOE_GPIOF, GpioFIrq, pac::GPIO,
-    pac::GPIOA_BASE + 0x1000, 5, pac::GPIOA_BASE + 0x1400, 3);
+port_irq2!(
+    GPIOE_GPIOF,
+    GpioFIrq,
+    pac::GPIO,
+    pac::GPIOA_BASE + 0x1000,
+    5,
+    pac::GPIOA_BASE + 0x1400,
+    3
+);
