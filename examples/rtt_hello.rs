@@ -15,11 +15,12 @@
 use defmt_rtt as _; // RTT 日志通道(全局 logger)
 use panic_probe as _; // defmt 版 panic handler
 
-/// defmt 的时间戳(毫秒 uptime):embassy-time 的 Instant 提供
-#[unsafe(no_mangle)]
-fn _defmt_timestamp() -> u64 {
-    embassy_time::Instant::now().as_micros() / 1_000
-}
+// defmt 1.x 用 timestamp! 宏定义"时间戳提供者"：宏在顶层展开为
+// #[export_name = "_defmt_timestamp"] 的函数(defmt 0.3 时代是手写
+// #[no_mangle] fn _defmt_timestamp() -> u64,defmt 1.x 起签名改为接收
+// Formatter、由本宏代写)。时间戳 = 毫秒 uptime,由 embassy-time 的
+// Instant 提供(SysTick 时间驱动已随 init 启动)。
+defmt::timestamp!("{=u64}", embassy_time::Instant::now().as_micros() / 1_000);
 
 use embassy_executor::main;
 use embassy_time::Timer;

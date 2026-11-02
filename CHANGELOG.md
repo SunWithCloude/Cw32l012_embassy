@@ -88,6 +88,9 @@
 - timer：GTIM 清更新标志改走 PAC 的 `Gtim::icr` 字段（cw32l012-pac 补录
   0x70 处 ICR，§16.10.6 R1W0，厂商库 `GTIM_TypeDef` Size=116 交叉核对），
   撤掉驱动里的裸指针偏移 hack，行为逐位一致。
+- rtt_hello 示例的时间戳提供者改走 defmt 1.x 的 `timestamp!` 宏（旧的手写
+  `_defmt_timestamp` 签名在 defmt 1.x 下不会被采纳——defmt 0.3→1.0 签名
+  变更，旧写法静默失效；nm 实证符号与 `{=u64}` 元数据已配对）。
 
 
 ### 新增
