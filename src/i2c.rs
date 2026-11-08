@@ -2,15 +2,17 @@
 //!
 //! 家族差异（feature 二选一）：
 //!
-//! - **cw32l012**（命令 FIFO 式，保留 v0.1 驱动）：MTDR 写命令
-//!   （START+地址、TX、RXCOUNT、STOP），等待点 TXE/RXNE/PACKET/错误经
-//!   MIER 中断 + waker 异步化；时序按 I2C 规范推导（与 cw32l012-hal
-//!   同源公式，已对照手册表 23-4 官方示例校准）。事务语义：每个
-//!   Operation 独立执行 START…STOP，`Write` 后跟 `Read` 不做重复起始。
+//! - **cw32l012**（命令 FIFO 式）：MTDR 写命令（START+地址、TX、
+//!   RXCOUNT、STOP），等待点 TXE/RXNE/PACKET/错误经 MIER 中断 + waker
+//!   异步化；时序按 I2C 规范推导（与 cw32l012-hal 同源公式，已对照
+//!   手册表 23-4 官方示例校准）。事务语义：整个 transaction 单次
+//!   START，方向切换处重复起始（repeated START，命令编码与 START 相同
+//!   ——出处见 [`l012::I2c::transaction`]），末操作后 STOP，与
+//!   `embedded-hal-async` 契约一致。
 //! - **cw32f030**（新写）：经典 8051 风格状态机外设——CR 置 STA/STO、
 //!   DR 装字节，SI 置位时 STAT 给出状态码（0x08/0x10/0x18/…/0x58）。
-//!   等待点唯一（CR.SI），经 NVIC + AtomicWaker 异步化。事务语义
-//!   **强于 L012 版**：整个 transaction 单次 START，操作间切换方向时
+//!   等待点唯一（CR.SI），经 NVIC + AtomicWaker 异步化。事务语义与
+//!   L012 升级版一致：整个 transaction 单次 START，操作间切换方向时
 //!   发重复起始（repeated-START）——`[Write, Read]` 天然复用重复起始，
 //!   适合"写寄存器指针 + 读数据"类器件（EEPROM 随机读、传感器保持
 //!   寄存器等）；同向连续 Operation 直接续传不重发地址；读尾自动
@@ -71,14 +73,16 @@ impl Default for Config {
 /// per-实例 waker（0/1 = I2C1/2；两代中断语义不同但实例布局相同）
 static WAKER: [AtomicWaker; 2] = [const { AtomicWaker::new() }; 2];
 
-// ================= L012 家族（命令 FIFO 式,保留 v0.1 驱动） =================
+// ================= L012 家族（命令 FIFO 式） =================
 
-/// L012 家族驱动。命令 FIFO 式外设——保留 v0.1 代码，仅随双家族化
-/// 调整模块归属与导入。
+/// L012 家族驱动。命令 FIFO 式外设——v0.1 驱动的单事务升级版
+/// （重复起始支持，命令序列出处见 [`I2c::transaction`]）。
 #[cfg(feature = "cw32l012")]
 mod l012 {
     use core::future::poll_fn;
     use core::task::Poll;
+
+    use embedded_hal_async::i2c::Operation;
 
     use super::{Config, Speed, WAKER};
     use crate::gpio::{GpioPort, Pin};
@@ -327,56 +331,116 @@ mod l012 {
             .await;
         }
 
-        /// 执行一次完整事务：START(地址) → 写/读 → STOP。
+        /// 执行一次完整事务：单 START + 方向切换处重复 START + 结尾 STOP。
+        ///
+        /// 命令序列（每条 MTDR 写前等 TXE + 错误检查，节奏同 v0.1）：
+        ///
+        /// - **ST**：`CMD_START_ACK` + SLA+W/R。地址字节用 CMD=100（期待
+        ///   ACK）：UM §23.4.4.1（主机发送）写“CMD=100、DATA=SLA+W 产生
+        ///   START”、§23.4.4.2（主机接收）写“CMD=100、DATA=SLA+R 产生
+        ///   START”；厂商库 `I2C_Cmd_Tx_RepSTART_Data_Rx_ACK`
+        ///   （cw32l012_lpi2c.h:186）。⚠ v0.1 曾对读方向用
+        ///   `CMD_START_NACK`（CMD=101，期待 NACK）发 SLA+R——与上述
+        ///   手册/厂商库/源 cw32l012-hal（`start_addr(.., expect_nack)`
+        ///   恒传 false）三处证据冲突，现统一为 CMD=100。
+        /// - **TX**：逐字节 `CMD_TX`（厂商库 `I2C_MasterSend`，
+        ///   cw32l012_lpi2c.c:649-686：等 TXE → 写 MTDR=字节 → 查 NACK）。
+        /// - **SR**：方向切换处再次写 `CMD_START_ACK` + SLA+W/R——编码与
+        ///   ST 完全相同，硬件按自身是否持有总线决定发 START 还是
+        ///   Repeated START：厂商库 `I2C_MasterSTART_Addr7b`（c:476-493）
+        ///   与 `I2C_MasterReSTART_Addr7b`（c:504-517）写入的 MTDR 字逐字
+        ///   相同（`I2C_Cmd_Tx_RepSTART_Data_Rx_ACK | (slaveAddr << 1) |
+        ///   dataMode`），仅前者多一个 BUSY 预检；UM §23.4.4.1/23.4.4.2
+        ///   均以“发 STOP 或 Repeated START”描述收尾分支。MTDR 寄存器表
+        ///   （UM §23.8.11）对 CMD=100/101 的原文即“(Repeated)START”。
+        /// - **RX**：`CMD_RXCOUNT`（DATA=n-1，硬件收 DATA+1 字节入 MRDR）
+        ///   + 逐字节等 RXNE 读 MRDR（厂商库 `I2C_MasterReceive`，
+        ///   c:608-647；UM §23.4.4.2 同款）。n>256 分块排队（DATA 字段
+        ///   8 位上限，块间不重发地址——命令 FIFO 顺序执行）。
+        /// - **SP**：`CMD_STOP` + 等 MISR.STOP（厂商库 `I2C_MasterSTOP`，
+        ///   c:585-598：等 TXE → 写 CMD=010 → 等 STOP 标志）。
+        ///
+        /// 收到的数据字节主机侧 ACK/NACK 由 STAR.TXNACK（0x154 bit0，
+        /// 复位默认 0=ACK，UM §23.8.22）控制；本驱动保持复位默认——厂商
+        /// 库主机接收流程（c:608-647）同样不触碰该位。空事务无总线动作；
+        /// 空读 run 仅寻址（与 F030 经典分支语义一致）。
         async fn transaction_inner(
             &mut self,
-            addr: u8,
-            write: Option<&[u8]>,
-            read: Option<&mut [u8]>,
+            address: u8,
+            operations: &mut [Operation<'_>],
         ) -> Result<(), I2cError> {
+            if operations.is_empty() {
+                return Ok(()); // 空事务无总线动作（与 F030 版一致）
+            }
             self.wait_bus_idle().await;
 
-            // START + 地址（含 R/W 位）
-            let start = if read.is_some() {
-                ic::CMD_START_NACK
-            } else {
-                ic::CMD_START_ACK
-            };
-            self.cmd(start, addr << 1 | u8::from(read.is_some()))
-                .await?;
+            // 地址字节 = 7 位地址 <<1 | R/W 位（厂商库 c:490/513 同款拼装）
+            let addr_w = address << 1;
+            let addr_r = addr_w | 1;
 
-            if let Some(w) = write {
-                if !w.is_empty() {
-                    for b in w {
-                        self.cmd(ic::CMD_TX, *b).await?;
-                    }
+            let mut op_i = 0usize;
+            let mut byte_i = 0usize;
+            // 当前 run 方向（None = 尚未发过 START）
+            let mut run_read: Option<bool> = None;
+
+            while op_i < operations.len() {
+                let dir_read = matches!(operations[op_i], Operation::Read(_));
+                if run_read != Some(dir_read) {
+                    // ST / SR：同一编码，硬件按总线状态自行选择
+                    self.cmd(ic::CMD_START_ACK, if dir_read { addr_r } else { addr_w })
+                        .await?;
+                    run_read = Some(dir_read);
                 }
-            }
-            if let Some(r) = read {
-                if !r.is_empty() {
-                    // RXCOUNT = n-1
-                    self.cmd(ic::CMD_RXCOUNT, (r.len() - 1) as u8).await?;
-                    for slot in r.iter_mut() {
-                        loop {
-                            let f = self
-                                .wait_flags(
-                                    ic::MISR_RXNE
-                                        | ic::MISR_NACK
-                                        | ic::MISR_ARBI
-                                        | ic::MISR_FIFO
-                                        | ic::MISR_PINLOW,
-                                )
-                                .await;
-                            self.check_errors(f).await?;
-                            if f & ic::MISR_RXNE != 0 {
-                                break;
+                if dir_read {
+                    // 先把游标推进到首个非空读位置（空读 op 仅寻址）
+                    advance_reads(operations, &mut op_i, &mut byte_i);
+                    // 合并连续 Read op 的剩余字节数，按 ≤256 分块收
+                    let remain = read_remain(operations, op_i, byte_i);
+                    let mut got = 0usize;
+                    while got < remain {
+                        let chunk = (remain - got).min(256);
+                        // RXCOUNT = 本块字节数 - 1（硬件收 DATA+1 个）
+                        self.cmd(ic::CMD_RXCOUNT, (chunk - 1) as u8).await?;
+                        for _ in 0..chunk {
+                            loop {
+                                let f = self
+                                    .wait_flags(
+                                        ic::MISR_RXNE
+                                            | ic::MISR_NACK
+                                            | ic::MISR_ARBI
+                                            | ic::MISR_FIFO
+                                            | ic::MISR_PINLOW,
+                                    )
+                                    .await;
+                                self.check_errors(f).await?;
+                                if f & ic::MISR_RXNE != 0 {
+                                    break;
+                                }
                             }
+                            let v = self.regs.mrdr.read();
+                            let b = (v & ic::MRDR_DATA_MASK) as u8;
+                            match operations.get_mut(op_i) {
+                                Some(Operation::Read(r)) if byte_i < r.len() => {
+                                    r[byte_i] = b;
+                                    byte_i += 1;
+                                }
+                                // 游标与接收计数失配（防御分支，正常不可达）
+                                _ => return Err(I2cError::Fifo),
+                            }
+                            advance_reads(operations, &mut op_i, &mut byte_i);
                         }
-                        let v = self.regs.mrdr.read();
-                        *slot = (v & ic::MRDR_DATA_MASK) as u8;
+                        got += chunk;
+                    }
+                    // 空读 run：游标仍在首个空读 op 上，推过它
+                    advance_reads(operations, &mut op_i, &mut byte_i);
+                } else {
+                    // 写 run：跨连续 Write op 续传，遇 Read op / 尾部停止
+                    while let Some(b) = next_tx_byte(operations, &mut op_i, &mut byte_i) {
+                        self.cmd(ic::CMD_TX, b).await?;
                     }
                 }
             }
+
             self.cmd(ic::CMD_STOP, 0).await?;
             // 等 STOP 完成
             loop {
@@ -392,30 +456,82 @@ mod l012 {
         }
     }
 
+    /// 取下一待发字节：跨连续 `Write` op 合并（耗尽/空写 op 直接推进
+    /// 游标），遇 `Read` op 或游标到尾返回 `None`（方向切换交给调用方
+    /// 重复起始）。与 F030 经典分支同款游标逻辑。
+    fn next_tx_byte(
+        operations: &[Operation<'_>],
+        op_i: &mut usize,
+        byte_i: &mut usize,
+    ) -> Option<u8> {
+        loop {
+            match operations.get(*op_i)? {
+                Operation::Write(w) => {
+                    if *byte_i < w.len() {
+                        let b = w[*byte_i];
+                        *byte_i += 1;
+                        return Some(b);
+                    }
+                    // 本写 op 耗尽 → 下一 op（空写 op 同样穿透）
+                    *op_i += 1;
+                    *byte_i = 0;
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// 推进读游标：跳过耗尽/空的连续 `Read` op；返回是否仍在读 run 内。
+    fn advance_reads(operations: &[Operation<'_>], op_i: &mut usize, byte_i: &mut usize) -> bool {
+        loop {
+            match operations.get(*op_i) {
+                Some(Operation::Read(r)) if *byte_i < r.len() => return true,
+                Some(Operation::Read(_)) => {
+                    *op_i += 1;
+                    *byte_i = 0;
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// 合并读 run 的剩余未收字节数（当前 op 剩余 + 后续连续 `Read` op
+    /// 全长；RXCOUNT 分块与末字节时机按整个 run 计，跨 op 不重发地址）。
+    fn read_remain(operations: &[Operation<'_>], op_i: usize, byte_i: usize) -> usize {
+        let mut n = 0;
+        for (k, op) in operations.iter().enumerate().skip(op_i) {
+            match op {
+                Operation::Read(r) => {
+                    n += if k == op_i {
+                        r.len().saturating_sub(byte_i)
+                    } else {
+                        r.len()
+                    };
+                }
+                _ => break,
+            }
+        }
+        n
+    }
+
     impl embedded_hal_async::i2c::ErrorType for I2c {
         type Error = I2cError;
     }
 
     impl embedded_hal_async::i2c::I2c for I2c {
-        /// v0.1：每个 Operation 独立执行完整事务（START…STOP）。
-        /// `Write` 后紧跟 `Read` 不做重复起始（repeated-start），个别要求
-        /// 重复起始的器件（如部分传感器保持寄存器指针）暂不支持。
+        /// 单事务：整个 operations 序列一次 START，方向切换处重复 START
+        /// （repeated START），末操作后 STOP——`embedded-hal-async`
+        /// `I2c::transaction` 契约（ST SAD+W/R … SR SAD+R/W … SP）。命令
+        /// 序列出处（UM V1.2 §23 / 厂商库 cw32l012_lpi2c）见
+        /// [`I2c::transaction_inner`] 文档。`read`/`write`/`write_read`
+        /// 由 trait 默认实现路由到本方法（`write_read` 即复用重复起始
+        /// 的"写寄存器指针 + 读数据"单事务）。
         async fn transaction(
             &mut self,
             address: u8,
-            operations: &mut [embedded_hal_async::i2c::Operation<'_>],
+            operations: &mut [Operation<'_>],
         ) -> Result<(), Self::Error> {
-            for op in operations {
-                match op {
-                    embedded_hal_async::i2c::Operation::Write(w) => {
-                        self.transaction_inner(address, Some(w), None).await?
-                    }
-                    embedded_hal_async::i2c::Operation::Read(r) => {
-                        self.transaction_inner(address, None, Some(r)).await?
-                    }
-                }
-            }
-            Ok(())
+            self.transaction_inner(address, operations).await
         }
     }
 
