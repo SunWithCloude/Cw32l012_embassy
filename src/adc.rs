@@ -6,8 +6,8 @@
 //!   [`classic`] 分支。寄存器面与 L012 无一处同构（cr0/cr1/start/sqr/
 //!   cr2/vth/vtl/trigger/result0..3/resultacc/ier/icr/isr vs L012 的
 //!   cr/start/sqrcfr/sample/result0..7），实现独立。f003 与 f030/f020
-//!   同款但无 DMA 硬件（CR1 无 DMAEN 位，尾部多 14 位扩展 RESULT140..143
-//!   + ENABLE14，本驱动不触碰）。DMA 路径为单通道多次转换
+//!   同款但无 DMA 硬件（CR1 无 DMAEN 位，尾部多 14 位扩展
+//!   RESULT140..143 + ENABLE14，本驱动不触碰）。DMA 路径为单通道多次转换
 //!   （[`ClassicAdc::read_dma`]，仅 f030/f020——f003 无 DMA，每次转换
 //!   完成一个 DMA 请求），与 L012 的整序列 DMA（`read_sequence_dma`）
 //!   形状不同。

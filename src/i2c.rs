@@ -353,8 +353,8 @@ mod l012 {
         ///   dataMode`），仅前者多一个 BUSY 预检；UM §23.4.4.1/23.4.4.2
         ///   均以“发 STOP 或 Repeated START”描述收尾分支。MTDR 寄存器表
         ///   （UM §23.8.11）对 CMD=100/101 的原文即“(Repeated)START”。
-        /// - **RX**：`CMD_RXCOUNT`（DATA=n-1，硬件收 DATA+1 字节入 MRDR）
-        ///   + 逐字节等 RXNE 读 MRDR（厂商库 `I2C_MasterReceive`，
+        /// - **RX**：`CMD_RXCOUNT`（DATA=n-1，硬件收 DATA+1 字节入
+        ///   MRDR）+ 逐字节等 RXNE 读 MRDR（厂商库 `I2C_MasterReceive`，
         ///   c:608-647；UM §23.4.4.2 同款）。n>256 分块排队（DATA 字段
         ///   8 位上限，块间不重发地址——命令 FIFO 顺序执行）。
         /// - **SP**：`CMD_STOP` + 等 MISR.STOP（厂商库 `I2C_MasterSTOP`，
