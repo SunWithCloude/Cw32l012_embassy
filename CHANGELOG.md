@@ -6,6 +6,51 @@
 
 ### 新增
 
+- **经典组 RTC**（`ClassicRtc`，f030/f020/l031/l052/l083/r031/w031；f003
+  无 RTC 硬件）：与 L012 不同 IP 的另一套日历——同款 `0xCA`→`0x53` KEY
+  解锁（**上锁字 0x55**，RTC_KEY_LOCKW，厂商 cw32f030_rtc.h:347；L012
+  侧为任意非 0x53），但运行中访问走 **ACCESS/WINDOW 窗**而非 L012 的
+  WAIT 位（厂商 RTC_SetAlarm/RTC_AlarmCmd 配方，cw32f030_rtc.c:296-308/
+  349-369：CR1.ACCESS=1 → 轮询 WINDOW==1 → 写 → ACCESS=0；停表直写、
+  IER/ICR 不需要窗），无 PSC/SSCNT 预分频（日历=时钟源固定 32768 分频，
+  cw32-hal2 lse-qualified.yaml rtc_calendar_divisor），DATE 日/月字段更宽
+  （DAY[7:0]/MONTH[15:8] vs L012 DAY[5:0]/MONTH[12:8]），闹钟位面与
+  L012 完全一致（厂商 RTC_AlarmMask_All=0x7F808080 同语义）。API 与
+  L012 侧对齐：`start`/`stop`/`set_datetime`/`now`/`set_alarm_a/b`/
+  `enable_alarm_a/b`/`wait_alarm`/`wait_alarm_b`/`flags`/`clear_flags`/
+  `enable_interrupt`（返回 `Result`——运行中访问窗有界轮询可超时，厂商
+  RTC_ACCESS_MAXTIMES=200 语义）。门控 APBEN1.RTC=bit3 读改写**无 KEY**
+  （纠正任务面"KEY 读改写"假设）；LSI/LSE 使能在 SYSCTRL.CR1[3]/[4]，
+  **CR1 带 0x5A5A KEY**（厂商 RCC_LSI_Enable `CR1 |= SYSCTRL_BYPASS |
+  LSIEN`，cw32f030_rcc.c:305，SYSCTRL_BYPASS=0x5A5A0000 rcc.h:47；生成
+  PAC 7 家族 sysctrl.cr1 key[31:16] 位段同款）。LSI 标称 32800Hz
+  （cw32f030_rcc.h:44；L031 组同值，cw32-hal2 rcc l031 mod.rs:154），
+  走 LSI 时日历秒 ≈1.00098s；不回填出厂 TRIM（回填地址仅 f030/f020 有
+  厂商库实锤，复位默认即出厂校准，cw32-hal2 经典组同样不动）。异步闹钟
+  语义与 L012 同款（经典组有闹钟中断 → `wait_alarm` 同款异步实现：等待
+  期间才开 IER、IRQ 单发压掉、ICR R1W0 清标志；IRQ2，7 家族 PAC
+  interrupt::RTC=2 同号）。七家族 PAC 的 RTC 结构体与位段常量**逐字节
+  同构**（diff 为空）；cw32-hal2 rtc/mod.rs 的独立实现交叉印证同款键
+  序列与窗协议。示例 `rtc_alarm_f030`（LSE 失败退 LSI 回退链 + PC13
+  心跳观测面）。⚠ 语义级实现待实板验证。
+- **经典组 IWDT/WWDGT**（`ClassicIwdt`/`ClassicWwdgt`，f030/f020/f003/
+  l031/l052/l083/r031/w031——f003 无 RTC 但两条看门狗都在）：键值序列与
+  L012 **完全同款**（0xCCCC 启动/0xAAAA 喂狗/0x5555 解锁/0x6666 上锁/
+  0x5A5A→0xA5A5 停止，cw32f030_iwdt.h:76-81；cw32-hal2 wdg/mod.rs 交叉
+  印证），配方差异实锤三条：①厂商库要求**先 0xCCCC 启动再改配置**
+  （cw32f030_iwdt.c:71-72 注释原文），配置后等 SR.CRF/ARRF/WINRF 同步
+  清零再喂狗装载（IWDT_Init+IWDT_SetPeriod 组合）——L012 分支是先配置
+  再启动；②计数时钟为**专属 RC10K**（CW32x030 手册 V2.5 claim，非
+  LSI），标称按厂商宏 IWDT_FREQ=10000（cw32f030_iwdt.h:48）——数据手册
+  电气表口径 typical 8000Hz/全温 4-12kHz（cw32-hal2 electrical.yaml
+  iwdt_clock），实际超时偏长、喂狗间隔留裕量，文档双口径注明；③门控
+  APBEN1：IWDT=bit5/WWDGT=bit4，读改写无 KEY。WWDGT 位面与 L012 **逐
+  位段一致**（CR0.WCNT/EN RW1、CR1.WINR/PRS[9:7]/IE[10]、SR.POV——
+  L012 PAC 注释同位面），配方沿用：窗口求解器
+  `ClassicWindowConfig::for_feed_interval`、feed 窗口检查、开启不可关。
+  示例 `wdt_demo_f030`（喂 5 次停喂的复位循环观测面，L012 版同款）。⚠
+  语义级实现待实板验证。
+
 - **家族矩阵扩至 11 个**：`cw32l010`/`cw32l011`（L012 代组，KEY 写保护 +
   UART 错误位 8..11 + APBEN1 布局）与 `cw32l031`/`cw32l052`/`cw32l083`/
   `cw32r031`/`cw32w031`/`cw32f020`/`cw32f003`（经典代，无 KEY + 错误位

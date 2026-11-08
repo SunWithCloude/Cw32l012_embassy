@@ -201,3 +201,11 @@ required-features = ["rt", "cw32l010"]
 [[example]]
 name = "i2c_transaction"
 required-features = ["rt", "cw32l012"]
+
+[[example]]
+name = "rtc_alarm_f030"
+required-features = ["rt", "cw32f030"]
+
+[[example]]
+name = "wdt_demo_f030"
+required-features = ["rt", "cw32f030"]
