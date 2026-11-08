@@ -145,7 +145,18 @@ pub mod rcc;
 pub mod rtc;
 pub mod spi;
 pub mod time_driver;
-#[cfg(feature = "cw32l012")]
+// timer：L012 GTIM（STM32 风格面）与经典代 GTIM（CR0/CMMR/IER 面）为
+// 两代 IP，分支见 src/timer.rs。l010/l011 的 GTIM 是另一代缓冲变体，待接。
+#[cfg(any(
+    feature = "cw32l012",
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 pub mod timer;
 pub mod uart;
 #[cfg(feature = "cw32l012")]

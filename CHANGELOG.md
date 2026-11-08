@@ -138,6 +138,27 @@
     L012 表但末档 **390**（非 518）+ 15 比较周期。API：`new`（APBEN1
     bit0 KEY 读改写）/`read`/`read_sequence`（1..=8 槽，per-槽采样
     周期）。示例 `adc_read_l010`。
+- **经典组 GTIM PWM**（`ClassicPwm`，f030/f020/l031/l052/l083/r031/w031
+  全 7 家族）：经典代 GTIM 的边沿对齐向上计数单通道 PWM + `wait_update()`
+  溢出节拍（OV 标志 + IER 单发纪律，ICR R1W0 写 `!OV` 清除、保全复位值
+  1 的 bit7/8）。**选 GTIM 不选 ATIM**：f020 无 ATIM（CW32F020 SDK 无
+  atim 文件、手册外设表亦无），GTIM 才是 7/7 全覆盖；厂商库简单 PWM
+  配方即 `GTIM_OCInit`+`GTIM_SetCompareN`+`GTIM_Cmd`。寄存器面与 L012
+  无一处同构（CR0 EN/MODE + CMMR CCxM 4bit + IER/ISR/ICR；分频两子面：
+  f030/f020 走 CR0.PRS 2^n（厂商库 `GTIM_PRESCALER_DIV1..DIV32768`，
+  cw32f030.h `GTIMx_CR0_PRS_Msk=0x780`），l031 组/l052/l083 有 PSC
+  寄存器线性 `div-1`（cw32l031.h `GTIMx_PSC_PSC_Msk=0xFFFF`；l031 组
+  PAC 结构体以块首址 0x400_0700 起排、绝对地址与 f030 的 +0x300 布局
+  相同））；无 EGR/无影子寄存器——ARR/CCR 立即生效、0%/100% 端点走
+  强制电平模式（CCxM=8/9，CCR 16bit 装不下 65536 周期）、PWM 模式
+  CCxM=15（CNT<CCR 输出高，各家手册 CMMR 表：14 为 CNT≥CCR 输出高，
+  与厂商库宏名方向相反，逐家手册核对过）。门控 GTIM1/2=APBEN1 bit1/2、
+  GTIM3/4=APBEN2 bit10/11（按家族存在性），NVIC 线独立 16/17/18/19
+  （l031 组仅前两档）。`timer` 模块重构为 l012/classic 两子模块
+  （L012 行为不变），`calc_pwm_psc_arr` 提为两代共用并新增
+  `calc_pwm_pow2_div`（PRS 变体量化，宿主测试 5 项）。示例
+  `timer_pwm_f030`（GTIM1_CH1@PB04 AF6，厂商库宏
+  `PB04_AFx_GTIM1CH1` cw32f030_gpio.h:931 + 数据手册 V1.9 表 5-4）。
 
 ### 变更
 
