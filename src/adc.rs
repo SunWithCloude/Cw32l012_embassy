@@ -1,24 +1,44 @@
-//! 异步 ADC：两套完全不同的 IP，按家族 feature 二选一编译。
+//! 异步 ADC：四套完全不同的 IP，按家族 feature 多选一编译。
 //!
 //! - **L012 家族**（`cw32l012`，§25，ADC1/ADC2）：见 `l012` 分支，
 //!   含内部通道（温度/1.2V 基准）+ 出厂校准 + DMA 序列。
-//! - **经典家族**（`cw32f030`/`cw32f020`，§22，单 ADC）：见 [`classic`]
-//!   分支。寄存器面与 L012 无一处同构（cr0/cr1/start/sqr/cr2/vth/vtl/
-//!   trigger/result0..3/resultacc/ier/icr/isr vs L012 的 cr/start/sqrcfr/
-//!   sample/result0..7），实现独立。DMA 路径为单通道多次转换
-//!   （[`ClassicAdc::read_dma`]，每次转换完成一个 DMA 请求），与 L012
-//!   的整序列 DMA（`read_sequence_dma`）形状不同。
+//! - **经典家族**（`cw32f030`/`cw32f020`/`cw32f003`，§22，单 ADC）：见
+//!   [`classic`] 分支。寄存器面与 L012 无一处同构（cr0/cr1/start/sqr/
+//!   cr2/vth/vtl/trigger/result0..3/resultacc/ier/icr/isr vs L012 的
+//!   cr/start/sqrcfr/sample/result0..7），实现独立。f003 与 f030/f020
+//!   同款但无 DMA 硬件（CR1 无 DMAEN 位，尾部多 14 位扩展 RESULT140..143
+//!   + ENABLE14，本驱动不触碰）。DMA 路径为单通道多次转换
+//!   （[`ClassicAdc::read_dma`]，仅 f030/f020——f003 无 DMA，每次转换
+//!   完成一个 DMA 请求），与 L012 的整序列 DMA（`read_sequence_dma`）
+//!   形状不同。
+//! - **8 槽扫描组**（`cw32l031`/`cw32l052`/`cw32l083`/`cw32r031`/
+//!   `cw32w031`）：见 [`scan8`] 分支。与 f030 同为经典代配方（CR0.MODE/
+//!   REF/CLK/SAM/BUF、CR1.CHMUX、EOC/EOS、READY），但序列面扩为
+//!   SQR0（ENS[18:16] 3bit + 槽 0..3）+ SQR1（槽 4..7）、结果 8 个、
+//!   0x0C 处无 SQR（空洞）——五家族 PAC 的 ADC 结构体逐寄存器同构
+//!   （TRIGGER 位面 l052/l083 多几个源，与本驱动的软件触发路径无关）。
+//!   有 ClassicDma 硬件但 ADC-DMA 联动本轮不做。
+//! - **L010/L011 低配代组**（`cw32l010`/`cw32l011`）：见 [`low`] 分支。
+//!   单实例 @0x4000_0000，寄存器面是 L012 的"近亲但不同构"：同为
+//!   SAMPLE/SQRCFR 逐槽 4bit + ENS 序列 + 8 结果 + EOC/EOS + START 写 0
+//!   复位游标，但偏移/位序全不同（START@0x08、SAMPLE@0x28、SQRCFR@0x2C、
+//!   RESULT0@0x40、IER@0x74；CR 的 CLK[5:4]/ENS[8:6] 且 **BGREN/TSEN 在
+//!   ADC_CR 内**——L012 在独立 BGR 控制器）。无 BGR 外设、无出厂校准字、
+//!   无 READY 位、无 DMA；内部通道 TS(IN14)/BGR1.2(IN15) 存在（原始
+//!   counts，40µs 级采集/稳定期）。采样档与 L012 同表但末档 390（非
+//!   518）+ 15 比较周期。
 //!
 //! ```ignore
 //! embassy_cw32::bind_interrupts!(struct Irqs {
 //!     ADC1 => adc::Adc1Irq;          // L012
-//!     ADC  => adc::ClassicAdcIrq;    // 经典组（IRQ12）
+//!     ADC  => adc::ClassicAdcIrq;    // 经典组/扫描组/低配组（IRQ12）
 //! });
 //! ```
 //!
-//! 两分支的公共类型不混用：L012 用 `Adc`/`AdcChannel`/`AdcError` 等，
-//! 经典组用 `ClassicAdc`/`ClassicChannel`/`ClassicAdcError` 等（均经
-//! `pub use` 平铺到本模块）。
+//! 各分支的公共类型不混用：L012 用 `Adc`/`AdcChannel`/`AdcError` 等，
+//! 经典组用 `ClassicAdc`/`ClassicChannel`/`ClassicAdcError` 等，扫描组
+//! 用 `Scan8Adc`/`Scan8Channel`/…，低配组用 `LowAdc`/`LowChannel`/…
+//! （均经 `pub use` 平铺到本模块）。
 //!
 //! 外部引脚均须先 [`crate::gpio::Pin::into_analog`] 转模拟。
 
@@ -528,11 +548,20 @@ mod l012 {
 #[cfg(feature = "cw32l012")]
 pub use l012::*;
 
-// ================= 经典组分支（f030 / f020，CW32x030 手册 §22）=================
+// ================= 经典组分支（f030 / f020 / f003，CW32x030 手册 §22）=================
 // 12bit SAR ADC，1MSPS 顶速，单实例 @0x4001_2400（IRQ12）。寄存器面：
 // cr0/cr1/start/sqr/cr2/vth/vtl/trigger/result0..3/resultacc/ier/icr/isr
-// （f030 与 f020 两 PAC 的 ADC 结构体与位段逐项比对同款，仅 f020 的
-// TRIGGER 无 ATIM 位——f020 无高级定时器）。
+// （f030/f020/f003 三 PAC 的 ADC 结构体与位段逐项比对同款；f020 的
+// TRIGGER 无 ATIM 位——无高级定时器；f003 的 CR1 无 DMAEN 位、TRIGGER
+// 位名为引脚组（PA10/PB32 等）且尾部多 14 位扩展 RESULT140..143 +
+// ENABLE14（KEY 保护 WO）——14 位模式本驱动不触碰，仍为 12 位右对齐）。
+//
+// f003 的外部通道-引脚映射与 f030 不同（IN0=PB2、IN1=PA1、IN2=PA4、
+// IN3=PA6、IN4=PA7、IN5..7=PC0..2、IN8=PB0、IN9=PB1、IN10=PB6、
+// IN11=PB5、IN12=PB3，cw32-data af/cw32f003-analog.yaml），内部通道
+// 同为 13=VDDA/3、14=温度、15=Vref1.2（classic-adc-scans.yaml
+// CW32F003 facts）。f003 无 DMA 硬件（dma 模块未编译），read_dma 与
+// TRIGGER 位面相关的 ClassicTrig 仅 f030/f020 可用。
 //
 // DMA 路径（[`ClassicAdc::read_dma`]）：CR1.DMAEN=转换完成发 DMA 请求
 // （§22.13.2；厂商库 ADC_DMACmd），请求源 HARDSRC=0x0A（§8.8.4，厂商库
@@ -552,7 +581,7 @@ pub use l012::*;
 //
 // ⚠ 全部路径为语义级实现（配方逐条对照上述来源），尚未实板验证；
 //   首次上板请按 examples/adc_read_f030.rs 回归。
-#[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
+#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32f003"))]
 mod classic {
     use core::future::poll_fn;
     use core::sync::atomic::Ordering;
@@ -576,6 +605,7 @@ mod classic {
     /// 落 RESULT0，全部完成置 EOA 且 START 自动清零（厂商库
     /// ADC_SingleChMoreMode，§22.5.2；DMA 路径 [`ClassicAdc::read_dma`]
     /// 用此模式：每次转换完成发一个 DMA 请求，源固定读 RESULT0）
+    #[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
     const MODE_SINGLE_MORE: u32 = 1 << 1;
     /// MODE=4：序列扫描——一次 START 按序转换整段序列，逐通道置 EOC、
     /// 序列完置 EOS 且 START 自动清零（ADC_SerialChScanMode，§22.5.5）
@@ -601,14 +631,27 @@ mod classic {
     /// CR1.DMAEN：转换完成发出 DMA 请求（§22.13.2 bit7；厂商库
     /// ADC_DMACmd/ADC_DMAEnable = REGBITS_SET/CLR(CR1, DMAEN_Msk)，
     /// cw32f030_adc.c:697-727。构造时恒关，[`ClassicAdc::read_dma`]
-    /// 传输期间临时打开）
+    /// 传输期间临时打开）。f003 无此位段（无 DMA 硬件）
+    #[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
     const CR1_DMAEN: u32 = 1 << 7;
+    /// f003 无 DMAEN 位段（bit7 保留），按 0 处理保持调用面一致
+    #[cfg(not(any(feature = "cw32f030", feature = "cw32f020")))]
+    const fn dmaen_mask() -> u32 {
+        0
+    }
+    #[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
+    const fn dmaen_mask() -> u32 {
+        CR1_DMAEN
+    }
     /// CR2.CNT[7:0]：MODE=1/MODE=5 的转换次数 −1（共 CNT+1 次，§22.13.3）
+    #[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
     const CR2_CNT_MASK: u32 = 0xFF;
     /// CR2.ACCEN：转换结果累加进 RESULTACC（bit8；厂商库 MODE=1 配置
     /// 强制置位——cw32f030_adc.c:408「Must be added」，照抄）
+    #[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
     const CR2_ACCEN: u32 = 1 << 8;
     /// CR2.ACCRST：写 1 清零 RESULTACC（bit9，R0W1 自清脉冲，§22.13.3）
+    #[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
     const CR2_ACCRST: u32 = 1 << 9;
     /// START.START：软件启动。转换完成后硬件自动清零（§22.5.1 时序图）
     const START_START: u32 = 1 << 0;
@@ -730,9 +773,14 @@ mod classic {
     /// 硬件触发源（TRIGGER[15:0] 位面，§22.13.7；厂商库 ADC_ExtTrigCfg）。
     /// 置位后对应外设的事件等效一次 START。本版驱动的转换等待流程只在
     /// 软件触发路径验证过语义，硬件触发为寄存器面直配——待板验证。
+    ///
+    /// 仅 f030/f020（位面同源）。f003 的 TRIGGER 位为引脚组命名
+    /// （GTIM/PA10/PA32/…/PB74，cw32f003-pac adc::trigger），语义不同
+    /// 不在此暴露。
     #[allow(missing_docs)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
     pub enum ClassicTrig {
         /// ATIM（仅 `cw32f030`——f020 无高级定时器，TRIGGER 无 bit0）
         #[cfg(feature = "cw32f030")]
@@ -753,6 +801,7 @@ mod classic {
         I2c2,
     }
 
+    #[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
     impl ClassicTrig {
         fn code(self) -> u32 {
             match self {
@@ -811,8 +860,9 @@ mod classic {
                     | (ClassicVref::Vdda as u32) << 6
                     | ClassicSampleTime::S5.code()
             });
+            // f003 的 CR1 无 DMAEN 位段（bit7 保留），清 0 无副作用
             regs.cr1
-                .modify(|v| v & !(CR1_ALIGN | CR1_DMAEN | CR1_CHMUX_MASK));
+                .modify(|v| v & !(CR1_ALIGN | CR1_CHMUX_MASK | dmaen_mask()));
 
             // 使能 + 等 READY（§22.4.1 步骤 4/5；厂商库 ADC_Enable 同样
             // 忙等 ISR.READY）。EN 0→1 到 READY ≤40µs，这里给 ~1ms 上限
@@ -840,6 +890,7 @@ mod classic {
 
         /// 使能外部硬件触发源（TRIGGER |= bit；厂商库 ADC_ExtTrigCfg）。
         /// 触发事件出现时等效一次 START。见 [`ClassicTrig`] 的待板验证注。
+        #[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
         pub fn enable_trigger(&mut self, src: ClassicTrig) {
             self.regs.trigger.modify(|v| v | src.code());
         }
@@ -992,6 +1043,8 @@ mod classic {
         ///
         /// 序列模式（MODE=3/4）不走 DMA：结果按序列位置轮转落
         /// RESULT0..3，手册没有"按请求选结果寄存器"的机制，不做推断。
+        // f003 无 DMA 硬件（PAC 无 DMA 外设、CR1 无 DMAEN 位），本路径不编译
+        #[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
         pub async fn read_dma(
             &mut self,
             dma: &mut crate::dma::ClassicDma,
@@ -1100,5 +1153,838 @@ mod classic {
     }
 }
 
-#[cfg(any(feature = "cw32f030", feature = "cw32f020"))]
+#[cfg(any(feature = "cw32f030", feature = "cw32f020", feature = "cw32f003"))]
 pub use classic::*;
+
+// ================= 8 槽扫描组分支（l031/l052/l083/r031/w031）=================
+// 经典代配方的 8 槽扩展版：单实例 @0x4001_2400（IRQ12，各家 PAC
+// interrupt::ADC = 12）。寄存器面（cw32l031-pac src/lib.rs:136-180，
+// 五家族逐寄存器同构——cw32l031/cw32r031/cw32w031 三份 adc 位段常量
+// diff 为空，l052/l083 仅 TRIGGER 位面多 GTIM3/SPI2/I2C2/UART4-6 等
+// 外设触发源，软件触发路径不涉及）：
+// cr0(EN/MODE[3:1]/TSEN/REF[7:6]/CLK[10:8]/SAM[12:11]/BUF[13]/BIAS[15:14])
+// /cr1(CHMUX/ALIGN/WDT*)/start(START/AUTOSTOP)/cr2/vth/vtl/trigger/
+// result0..7/resultacc/ier/icr/isr(EOC..OVW+READY)/sqr0(SQR0..3+ENS[18:16]
+// 3bit)/sqr1(SQR4..7)。
+//
+// 与 f030 classic 的差异点（同配方不同形状）：
+// - 无 SQR@0x0C（空洞），序列拆 SQR0/SQR1 两寄存器、ENS 3bit（1..=8 槽）
+// - CR1 无 DMAEN（bit7 无位段）；CR0 无 BGREN 位段（Vref1.2 档见
+//   ClassicVref 同款 REF 编码；TS/BUF 位段在）
+// - 结果 8 个；ICR 写 0 清 EOC..OVW（READY 无 ICR 位，不可清）
+//
+// 配方出处（与 classic 分支三源交叉核对同源）：CW32L031 用户手册 V1.6
+// 表 22-5（AIN0..AIN12=PA0..PA7/PB0/PB1/PB2/PB10/PB11，通道映射经
+// cw32-data af/cw32l031-analog.yaml 路由表核对）；模式编码 SINGLE=0/
+// SCAN=4（cw32-hal2 cw32-data registers/adc_cw32l031_v1.yaml enum/Mode）；
+// 电气上限（采样 5/6/8/10 + 19 比较周期、分电压域 0.5/2/4/12/24MHz）
+// 与 classic 组同表（cw32-data electrical.yaml CW32L031/L052/L083/R031/
+// W031 adc_limits——R031 供电 2.2..3.6V、W031 1.8..3.6V，分频档选择时
+// 注意电压域）。R031/W031 的 PAC 复用 l031 寄存器版本
+// （classic-adc-scans.yaml register_version=cw32l031_v1）。
+//
+// ⚠ 全部路径为语义级实现（配方逐条对照上述来源），尚未实板验证；
+//   首次上板请按 examples/adc_read_l031.rs 回归。
+#[cfg(any(
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
+mod scan8 {
+    use core::future::poll_fn;
+    use core::sync::atomic::Ordering;
+    use core::task::Poll;
+
+    use embassy_sync::waitqueue::AtomicWaker;
+    use embassy_time::{Duration, with_timeout};
+
+    use crate::interrupt::{Binding, IrqHandler, interrupt};
+    use crate::pac;
+
+    // ---- 位常量面（cw32l031-pac pub mod adc 位段常量；l052/l083/r031/
+    //      w031 同名同位——四份 PAC 的 adc 模块逐常量比对，差异仅 TRIGGER
+    //      的外设触发源位，下列本驱动用到的位全部同位）----
+    /// CR0.EN：模块使能（EN 0→1 后 ≤40µs ISR.READY 置位，同 classic 组）
+    const CR0_EN: u32 = 1 << 0;
+    /// CR0.MODE[3:1]：工作模式（SINGLE=0 / CONTINUOUS=2 / SCAN=4）
+    const CR0_MODE_MASK: u32 = 0xE;
+    /// MODE=0：单通道单次转换（结果落 RESULT0）
+    const MODE_SINGLE_ONE: u32 = 0 << 1;
+    /// MODE=4：序列扫描——一次 START 按序转换 SQR0/SQR1 整段序列，逐通道
+    /// 置 EOC、序列完置 EOS 且 START 自动清零（register yaml enum/Mode.SCAN）
+    const MODE_SERIAL_SCAN: u32 = 4 << 1;
+    /// CR0.TSEN：内置温度传感器使能（读 TS 通道必需）
+    const CR0_TSEN: u32 = 1 << 5;
+    /// CR0.REF[7:6]：参考电压选择（编码同 classic 组）
+    const CR0_REF_MASK: u32 = 0xC0;
+    /// CR0.CLK[10:8]：ADCCLK = PCLK / N（N=1..128）
+    const CR0_CLK_MASK: u32 = 0x700;
+    /// CR0.SAM[12:11]：采样周期 5/6/8/10 ADCCLK
+    const CR0_SAM_MASK: u32 = 0x1800;
+    /// CR0.BUF：输入跟随器（内部通道 VDDA/3、TS、Vref1.2 必需，同 classic）
+    const CR0_BUF: u32 = 1 << 13;
+    /// CR1.CHMUX[3:0]：单通道模式待转换通道（表 22-5 编码）
+    const CR1_CHMUX_MASK: u32 = 0xF;
+    /// CR1.ALIGN：对齐（0=右对齐，本驱动固定右对齐）
+    const CR1_ALIGN: u32 = 1 << 6;
+    /// START.START：软件启动。序列完成后硬件自动清零（SCAN 模式）
+    const START_START: u32 = 1 << 0;
+    /// SQR0.ENS[18:16]：序列长度 1..=8（00..=仅 SQR0 槽 0 … 111=SQR0..SQR1
+    /// 全 8 槽；3bit——classic 组 f030 的 ENS[17:16] 只有 2bit，勿混）
+    const SQR0_ENS_POS: u32 = 16;
+    /// ISR/IER/ICR 公共位面：EOC=bit0（单次/每通道转换完）、EOS=bit1
+    /// （整段序列完）。ICR 为 R1W0——写 0 清对应 ISR 标志（EOC..OVW），
+    /// READY（bit7）只读无 ICR 位（cw32l031-pac adc::icr/isr 位段）
+    const ISR_EOC: u32 = 1 << 0;
+    const ISR_EOS: u32 = 1 << 1;
+    const IER_EOC: u32 = 1 << 0;
+    const IER_EOS: u32 = 1 << 1;
+    /// TRIGGER[15:0]：外部触发源使能位面。本枚举只收五家族 PAC 同名同位
+    /// 的公共源；l052/l083 额外的 GTIM3/GTIM4/SPI2/I2C2/UART4-6 与 l031
+    /// 组的 DMA/GPIOA..F 位不在此暴露（各家位面不同，避免跨家族误配）
+    const TRIGGER_ALL: u32 = 0xFFFF;
+
+    /// ADC 时钟分频（ADCCLK = PCLK / N）。电压域上限同 classic 组
+    /// （electrical.yaml adc_limits supply_bands：2.7V+ 档 24MHz …
+    /// 1.65V 档 500kHz；R031 供电 2.2..3.6V）
+    #[allow(missing_docs)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[repr(u32)]
+    pub enum Scan8Clk {
+        Div1 = 0,
+        Div2 = 1,
+        Div4 = 2,
+        Div8 = 3,
+        Div16 = 4,
+        Div32 = 5,
+        Div64 = 6,
+        Div128 = 7,
+    }
+
+    impl Scan8Clk {
+        fn code(self) -> u32 {
+            (self as u32) << 8
+        }
+    }
+
+    /// 采样周期档位（单位 ADCCLK；总转换时间 = 采样 + 19）
+    #[allow(missing_docs)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[repr(u32)]
+    pub enum Scan8SampleTime {
+        S5 = 0,
+        S6 = 1,
+        S8 = 2,
+        S10 = 3,
+    }
+
+    impl Scan8SampleTime {
+        fn code(self) -> u32 {
+            (self as u32) << 11
+        }
+    }
+
+    /// 转换通道（表 22-5 编码，与 f030 classic 同映射：cw32-data
+    /// af/cw32l031-analog.yaml 路由 IN0..7=PA0..PA7、IN8=PB0、IN9=PB1、
+    /// IN10=PB2、IN11=PB10、IN12=PB11）
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum Scan8Channel {
+        /// 外部引脚通道 AIN0..=AIN12
+        In(u8),
+        /// VDDA/3（AIN13；需输入跟随器，驱动自动开 CR0.BUF）
+        VddaDiv3,
+        /// 内置温度传感器（AIN14；需跟随器 + TSEN，自动开）
+        TempSensor,
+        /// BGR 1.2V 基准（AIN15；需跟随器，自动开——本组 CR0 无 BGREN
+        /// 位段，基准使能不在 ADC 侧）
+        Bgr1v2,
+    }
+
+    impl Scan8Channel {
+        fn code(self) -> Option<u32> {
+            match self {
+                Scan8Channel::In(n) if n <= 12 => Some(n as u32),
+                Scan8Channel::In(_) => None,
+                Scan8Channel::VddaDiv3 => Some(13),
+                Scan8Channel::TempSensor => Some(14),
+                Scan8Channel::Bgr1v2 => Some(15),
+            }
+        }
+    }
+
+    /// 参考电压（CR0.REF[7:6]，编码同 classic 组）
+    #[allow(missing_docs)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[repr(u32)]
+    pub enum Scan8Vref {
+        /// BGR 1.5V（VDDA 1.8~2V 档）
+        Bgr1p5 = 0,
+        /// BGR 2.5V
+        Bgr2p5 = 1,
+        /// 外部基准 ExRef（PB00 引脚，须先 `into_analog`）
+        Extern1 = 2,
+        /// VDDA（0..VDDA 满量程，最常用）
+        Vdda = 3,
+    }
+
+    /// 硬件触发源（TRIGGER 位面；五家族公共子集，见模块注释）。
+    /// 置位后对应外设的事件等效一次 START。软件触发路径之外为寄存器面
+    /// 直配——待板验证。
+    #[allow(missing_docs)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum Scan8Trig {
+        Atim,
+        Gtim1,
+        Gtim2,
+        Btim1,
+        Btim2,
+        Btim3,
+        Uart1,
+        Uart2,
+        Uart3,
+        Spi1,
+        I2c1,
+    }
+
+    impl Scan8Trig {
+        fn code(self) -> u32 {
+            match self {
+                // 位面据 cw32l031-pac adc::trigger（atim=0/gtim1=1/gtim2=2/
+                // btim1=5/btim2=6/btim3=7/uart1=8/uart2=9/uart3=10/spi1=11/
+                // i2c1=13）；l052/l083 的同名位经 diff 确认同位
+                Scan8Trig::Atim => 1 << 0,
+                Scan8Trig::Gtim1 => 1 << 1,
+                Scan8Trig::Gtim2 => 1 << 2,
+                Scan8Trig::Btim1 => 1 << 5,
+                Scan8Trig::Btim2 => 1 << 6,
+                Scan8Trig::Btim3 => 1 << 7,
+                Scan8Trig::Uart1 => 1 << 8,
+                Scan8Trig::Uart2 => 1 << 9,
+                Scan8Trig::Uart3 => 1 << 10,
+                Scan8Trig::Spi1 => 1 << 11,
+                Scan8Trig::I2c1 => 1 << 13,
+            }
+        }
+    }
+
+    /// ADC 错误
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum Scan8AdcError {
+        /// 转换未在 10ms 内完成（时钟门控没开 / ADCCLK 超频？）
+        Timeout,
+        /// 配置非法（外部通道号 >12 / 序列长度 0 或 >8 / out 缓冲不足）
+        BadConfig,
+    }
+
+    /// per-实例 waker（本组单 ADC 实例）
+    static ADC_WAKER: AtomicWaker = AtomicWaker::new();
+
+    /// 异步 ADC（8 槽扫描组：l031/l052/l083/r031/w031）
+    pub struct Scan8Adc {
+        regs: &'static pac::ADC,
+    }
+
+    impl Scan8Adc {
+        /// 初始化：开时钟 → 基础配置 → 使能等 READY → 挂 NVIC。
+        ///
+        /// * `clk` — ADCCLK 分频（ADCCLK=PCLK/N，注意电压域上限）
+        /// * 默认参考电压 VDDA（可用 [`Self::set_vref`] 改）
+        pub fn new(
+            regs: &'static pac::ADC,
+            clk: Scan8Clk,
+            _irqs: impl Binding<interrupt::ADC>,
+        ) -> Self {
+            // SYSCTRL.APBEN2.ADC（bit2；cw32l031/cw32l052/cw32l083/
+            // cw32r031/cw32w031 五 PAC apben2.adc 均为 bit2）。经典代
+            // APBEN 无 KEY 写保护，读改写即可（同 classic 分支）
+            let sysctrl = unsafe { &*(pac::SYSCTRL_BASE as *const crate::Sysctrl) };
+            sysctrl.apben2.modify(|v| v | (1 << 2));
+
+            // 基础配置（同 classic 组 ADC_Init 配方）：分频按参数、参考
+            // VDDA、采样 5CLK、单通道单次模式；BUF/TSEN 关（内部通道在
+            // read 时按需开）、右对齐；CR2 关累加（本组 CR2 位面同 classic）
+            regs.cr1.modify(|v| v & !(CR1_ALIGN | CR1_CHMUX_MASK));
+            regs.cr2.write(0);
+            regs.cr0.modify(|v| {
+                (v & !(CR0_CLK_MASK | CR0_REF_MASK | CR0_SAM_MASK | CR0_MODE_MASK))
+                    | clk.code()
+                    | (Scan8Vref::Vdda as u32) << 6
+                    | Scan8SampleTime::S5.code()
+            });
+
+            // 使能 + 等 READY（同 classic 组：忙等 ISR.READY，~1ms 上限；
+            // 超限不报错，首次 read 会以 Timeout 暴露）
+            regs.cr0.modify(|v| v | CR0_EN);
+            let n = (crate::HCLK_HZ.load(Ordering::Relaxed) / 4_000).max(1);
+            for _ in 0..n {
+                if regs.isr.read() & (1 << 7) != 0 {
+                    break;
+                }
+                core::hint::spin_loop();
+            }
+
+            crate::interrupt::nvic_enable::<interrupt::ADC>();
+            Scan8Adc { regs }
+        }
+
+        /// 切换参考电压（CR0.REF[7:6]）
+        pub fn set_vref(&mut self, vref: Scan8Vref) {
+            self.regs
+                .cr0
+                .modify(|v| (v & !CR0_REF_MASK) | (vref as u32) << 6);
+        }
+
+        /// 使能外部硬件触发源（TRIGGER |= bit）。见 [`Scan8Trig`] 注。
+        pub fn enable_trigger(&mut self, src: Scan8Trig) {
+            self.regs.trigger.modify(|v| v | src.code());
+        }
+
+        /// 关闭全部外部触发源（TRIGGER 清零，仅软件 START）
+        pub fn disable_trigger(&mut self) {
+            self.regs.trigger.modify(|v| v & !TRIGGER_ALL);
+        }
+
+        /// 内部通道前置条件：内部通道均需跟随器（同 classic 组
+        /// ADC_BufEnSingleCh 配方），TS 另开 TSEN。置位即粘滞
+        fn apply_channel_analog(&self, ch: Scan8Channel) {
+            let regs = self.regs;
+            match ch {
+                Scan8Channel::In(_) => {}
+                Scan8Channel::VddaDiv3 => regs.cr0.modify(|v| v | CR0_BUF),
+                Scan8Channel::TempSensor => regs.cr0.modify(|v| v | CR0_BUF | CR0_TSEN),
+                Scan8Channel::Bgr1v2 => regs.cr0.modify(|v| v | CR0_BUF),
+            }
+        }
+
+        /// 单次转换一个通道（MODE=0 单通道单次 + 软件触发），等 EOC 异步
+        /// 唤醒，返回 0..4095（右对齐）。
+        ///
+        /// 配方（同 classic 组 read）：配 CHMUX/SAM → 清标志 → START=1 →
+        /// 等 EOC → 读 RESULT0。
+        pub async fn read(
+            &mut self,
+            ch: Scan8Channel,
+            sample: Scan8SampleTime,
+        ) -> Result<u16, Scan8AdcError> {
+            let code = ch.code().ok_or(Scan8AdcError::BadConfig)?;
+            let regs = self.regs;
+            regs.start.write(0); // 清残留（MODE=0 下转换完 START 自清）
+            self.apply_channel_analog(ch);
+            regs.cr1.modify(|v| (v & !CR1_CHMUX_MASK) | code);
+            regs.cr0.modify(|v| {
+                (v & !(CR0_SAM_MASK | CR0_MODE_MASK)) | sample.code() | MODE_SINGLE_ONE
+            });
+            regs.icr.write(0); // R1W0：写 0 清全部标志
+            regs.start.write(START_START);
+            // 时长上限：采样 10 + 19 = 29 ADCCLK；最低速档 PCLK/128@8MHz
+            // = 62.5kHz 时 ≈0.47ms，10ms 软超时裕量充足
+            match with_timeout(Duration::from_millis(10), wait_flag(regs, ISR_EOC, IER_EOC)).await {
+                Ok(()) => {}
+                Err(_) => {
+                    regs.start.write(0);
+                    regs.ier.modify(|v| v & !IER_EOC);
+                    regs.icr.write(0);
+                    return Err(Scan8AdcError::Timeout);
+                }
+            }
+            let r = (regs.result0.read() & 0xFFF) as u16;
+            regs.icr.write(0);
+            Ok(r)
+        }
+
+        /// 序列扫描转换（MODE=4：一次 START 按序转换 SQR0/SQR1 各槽一次，
+        /// 逐通道置 EOC、整段完置 EOS 且 START 自动清零；结果按传入顺序
+        /// 落 RESULT0..RESULT7），1..=8 通道。
+        ///
+        /// * `chs` — 通道序列（1..=4 写 SQR0、5..=8 写 SQR0+SQR1）
+        /// * `sample` — 采样周期（CR0.SAM 全局一档，无 per-通道位面）
+        /// * `out` — 结果缓冲（长度 ≥ chs.len()，0..4095 右对齐）
+        ///
+        /// 配方（cw32-hal2 classic 后端同款）：SQR0.ENS+SQR0y/SQR1y →
+        /// 清标志 → START=1 → 等 EOS → 读 RESULT0..n-1。
+        pub async fn read_sequence(
+            &mut self,
+            chs: &[Scan8Channel],
+            sample: Scan8SampleTime,
+            out: &mut [u16],
+        ) -> Result<(), Scan8AdcError> {
+            let n = chs.len();
+            if n == 0 || n > 8 || out.len() < n {
+                return Err(Scan8AdcError::BadConfig);
+            }
+            // ENS = n-1；槽 0..3 → SQR0.SQRy、槽 4..7 → SQR1.SQRy（各 4bit）
+            let mut sqr0 = (n as u32 - 1) << SQR0_ENS_POS;
+            let mut sqr1 = 0u32;
+            for (i, ch) in chs.iter().enumerate() {
+                let code = ch.code().ok_or(Scan8AdcError::BadConfig)?;
+                self.apply_channel_analog(*ch);
+                if i < 4 {
+                    sqr0 |= code << (4 * i);
+                } else {
+                    sqr1 |= code << (4 * (i - 4));
+                }
+            }
+            let regs = self.regs;
+            regs.start.write(0);
+            regs.cr0.modify(|v| {
+                (v & !(CR0_SAM_MASK | CR0_MODE_MASK)) | sample.code() | MODE_SERIAL_SCAN
+            });
+            regs.sqr0.write(sqr0);
+            regs.sqr1.write(sqr1);
+            regs.icr.write(0);
+            regs.start.write(START_START);
+            // 时长上限：8 通道 × 29 ADCCLK ≈ 232 ADCCLK，最低速档 ≈3.7ms
+            match with_timeout(Duration::from_millis(10), wait_flag(regs, ISR_EOS, IER_EOS)).await {
+                Ok(()) => {}
+                Err(_) => {
+                    // 同 classic 组：序列中途超时不再硬停（EOS 到来后 START
+                    // 自清），只压掉中断与标志并恢复单通道模式
+                    regs.ier.modify(|v| v & !IER_EOS);
+                    regs.icr.write(0);
+                    regs.cr0.modify(|v| v & !CR0_MODE_MASK);
+                    regs.sqr0.write(0);
+                    regs.sqr1.write(0);
+                    return Err(Scan8AdcError::Timeout);
+                }
+            }
+            let results = [
+                regs.result0.read(),
+                regs.result1.read(),
+                regs.result2.read(),
+                regs.result3.read(),
+                regs.result4.read(),
+                regs.result5.read(),
+                regs.result6.read(),
+                regs.result7.read(),
+            ];
+            for (slot, r) in out.iter_mut().zip(results.iter()) {
+                *slot = (r & 0xFFF) as u16;
+            }
+            regs.icr.write(0);
+            // 恢复单通道单次模式 + ENS=0，避免影响下次 read()
+            regs.cr0.modify(|v| v & !CR0_MODE_MASK);
+            regs.sqr0.write(0);
+            regs.sqr1.write(0);
+            Ok(())
+        }
+    }
+
+    /// 轮询等待 ISR 标志置位：等待时才开对应 IER 位，IRQ 唤醒后由本
+    /// poll 复查（标志清除由调用方经 ICR 写 0 完成，中断里不动 ISR）
+    async fn wait_flag(regs: &'static pac::ADC, flag: u32, ier_bit: u32) {
+        poll_fn(|cx| {
+            ADC_WAKER.register(cx.waker());
+            if regs.isr.read() & flag != 0 {
+                Poll::Ready(())
+            } else {
+                regs.ier.modify(|v| v | ier_bit);
+                Poll::Pending
+            }
+        })
+        .await;
+    }
+
+    // ================= 中断派发 =================
+
+    fn on_irq(regs: &'static pac::ADC) {
+        let isr = regs.isr.read();
+        // 唤醒等待者并单发压掉 IER 位（下次 poll 会重新打开）；ISR 标志
+        // 由驱动读结果后经 ICR 写 0 清除，此处不动
+        if isr & ISR_EOC != 0 {
+            regs.ier.modify(|v| v & !IER_EOC);
+            ADC_WAKER.wake();
+        }
+        if isr & ISR_EOS != 0 {
+            regs.ier.modify(|v| v & !IER_EOS);
+            ADC_WAKER.wake();
+        }
+    }
+
+    /// 8 槽扫描组 ADC 中断标记（IRQ12，l031/l052/l083/r031/w031 同号）
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct Scan8AdcIrq;
+    impl IrqHandler<interrupt::ADC> for Scan8AdcIrq {
+        fn call() {
+            on_irq(unsafe { &*(pac::ADC_BASE as *const pac::ADC) });
+        }
+    }
+}
+
+#[cfg(any(
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
+pub use scan8::*;
+
+// ================= L010/L011 低配代组分支 =================
+// 单实例 @0x4000_0000（IRQ12）。任务面的"L012 代组"只在门控布局意义
+// 上成立（APBEN1.adc=bit0 + KEY 写保护）；ADC 本体是与 L012 不同的
+// IP——厂商头文件逐寄存器比对（CW32L010 SDK V1.0.9 cw32l010.h:164-379
+// ADC_TypeDef Size=128、cw32l011.h:167-388 同布局 vs cw32l012.h
+// Size=124）：START@0x08（L012@0x04）、SAMPLE@0x28/SQRCFR@0x2C（L012
+// @0x18/0x20）、RESULT0..7@0x40..0x5C（L012@0x30）、IER@0x74（L012
+// @0x70）；CR 位序 EN/BGREN/TSEN/CONT/CLK[5:4]/ENS[8:6]（L012 为
+// EN/CONT/CLK[3:2]/ENS[6:4]/SLAVE，且 BGREN/TSEN 在独立 BGR 控制器）。
+// 生成 PAC 佐证：cw32l010-pac adc::cr 位段（bgren=1/tsen=2/cont=3/
+// clk=4/ens=6，src/lib.rs:714-727）与 l012 手写 PAC 不同。
+//
+// 低配点（相对 L012）：无 BGR 外设/无出厂校准字（全头文件无校准地址，
+// 原始 counts）、无 READY 位（ISR 仅 EOC/EOS/AWDL/AWDH，上电后直接
+// max(2µs,15 ADCCLK) 等稳定）、无 DMA、ICR 为 R1W0 且 AWDL/AWDH 写 1
+// 保留。内部通道 TS(IN14)/BGR1.2(IN15) 存在（TS/BGR 采集≥40µs——
+// cw32-hal2 docs/adc-low-async.md 审计结论 + sequence 后端
+// channel>=14 内部采集路径），外部通道 IN0..13（af/cw32l010-analog.yaml
+// 路由 0..6=PA0..PA6、7..12=PB0..PB5、13=PB6；l011 为 0..7=PA0..PA7、
+// 8=PB0、9=PB1、10..13=PA8..PA11）。采样档 6/7/9/12/18/24/30/42/54/
+// 70/102/134/166/198/262/**390**（末档 390 非 L012 的 518）+ 15 比较周期
+// （cw32-data electrical.yaml CW32L010/CW32L011 adc_limits）。
+//
+// 配方出处：START 写 0=停止+复位序列游标（L010 手册 §20.5.1/§20.12.2，
+// 经 cw32-hal2 docs/adc-low-async.md 表格引用锁定）、CR 配 EN/CONT=0/
+// ENS/CLK + TSEN/BGREN 粘滞置位（TS/BGR 前置）、序列 1..=8 槽逐槽
+// SAMPLE/SQRCFR 4bit、等 EOC（单次）/EOS（序列）后读 RESULT0..7 & 0xFFF。
+//
+// ⚠ 全部路径为语义级实现，尚未实板验证；首次上板请核对 RAW 值合理性。
+#[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+mod low {
+    use core::future::poll_fn;
+    use core::sync::atomic::Ordering;
+    use core::task::Poll;
+
+    use embassy_sync::waitqueue::AtomicWaker;
+    use embassy_time::{Duration, Timer, with_timeout};
+
+    use crate::interrupt::{Binding, IrqHandler, interrupt};
+    use crate::pac;
+
+    // ---- 位常量面（cw32l010-pac / cw32l011-pac pub mod adc 位段常量，
+    //      两 PAC 的 adc 模块除 TRIGGER 外逐常量一致）----
+    /// CR.EN：模块使能
+    const CR_EN: u32 = 1 << 0;
+    /// CR.BGREN：BGR 1.2V 基准使能（CR 内位——L012 在独立 BGR 控制器）
+    const CR_BGREN: u32 = 1 << 1;
+    /// CR.TSEN：温度传感器使能
+    const CR_TSEN: u32 = 1 << 2;
+    /// CR.CONT：连续转换（本驱动恒 0，单次/单序列）
+    const CR_CONT: u32 = 1 << 3;
+    /// CR.CLK[5:4]：ADCCLK = PCLK / N（N=1/2/4/8，2bit——L012 为 CLK[3:2]）
+    const CR_CLK_MASK: u32 = 0x30;
+    /// CR.ENS[8:6]：序列长度 1..=8 槽（3bit）
+    const CR_ENS_MASK: u32 = 0x1C0;
+    /// START.START：软件启动；写 0 = 停止并复位序列游标（§20.12.2）
+    const START_START: u32 = 1 << 0;
+    /// ISR/IER 位面：EOC=bit0、EOS=bit1（另有 AWDL/AWDH bit2/3）
+    const ISR_EOC: u32 = 1 << 0;
+    const ISR_EOS: u32 = 1 << 1;
+    const IER_EOC: u32 = 1 << 0;
+    const IER_EOS: u32 = 1 << 1;
+    /// ICR R1W0：写 0 清 EOC/EOS、写 1 保留 AWDL/AWDH（docs/adc-low-async.md
+    /// 「Typed ICR writes clear EOC/EOS with zero and preserve AWDL/AWDH
+    /// with one」）——与 classic 组「写 0 清全部」不同
+    const ICR_CLEAR_EOC_EOS: u32 = !(ISR_EOC | ISR_EOS);
+
+    /// ADC 时钟分频（ADCCLK = PCLK / N）。
+    ///
+    /// 电压域上限（electrical.yaml supply_bands）：L010 1.62V 档 4MHz …
+    /// 2.8V 档 24MHz、3.3V 档 48MHz；L011 1.7V 档 6MHz 且 **ADCCLK 下限
+    /// 4MHz**（manual 保守值，低于会返回 Timeout——降档请先降采样率预期）
+    #[allow(missing_docs)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[repr(u32)]
+    pub enum LowClk {
+        Div1 = 0,
+        Div2 = 1,
+        Div4 = 2,
+        Div8 = 3,
+    }
+
+    impl LowClk {
+        fn code(self) -> u32 {
+            (self as u32) << 4
+        }
+    }
+
+    /// 采样周期档位（单位 ADCCLK；总转换时间 = 采样 + 15 比较周期）。
+    /// 与 L012 同表但末档 390（非 518）
+    #[allow(missing_docs)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[repr(u8)]
+    pub enum LowSampleCycles {
+        S6 = 0,
+        S7 = 1,
+        S9 = 2,
+        S12 = 3,
+        S18 = 4,
+        S24 = 5,
+        S30 = 6,
+        S42 = 7,
+        S54 = 8,
+        S70 = 9,
+        S102 = 10,
+        S134 = 11,
+        S166 = 12,
+        S198 = 13,
+        S262 = 14,
+        S390 = 15,
+    }
+
+    /// 转换通道（外部 IN0..=IN13 + 内部 TS/BGR；引脚映射见模块注释，
+    /// l010 与 l011 不同）
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum LowChannel {
+        /// 外部引脚通道 IN0..=IN13（各家族引脚映射不同）
+        In(u8),
+        /// 内置温度传感器（IN14；原始 counts，无出厂校准字）
+        TempSensor,
+        /// BGR 1.2V 基准（IN15；原始 counts，仅量程校验用）
+        Bgr1v2,
+    }
+
+    impl LowChannel {
+        fn code(self) -> Option<u32> {
+            match self {
+                LowChannel::In(n) if n <= 13 => Some(n as u32),
+                LowChannel::In(_) => None,
+                LowChannel::TempSensor => Some(14),
+                LowChannel::Bgr1v2 => Some(15),
+            }
+        }
+    }
+
+    /// ADC 错误
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub enum LowAdcError {
+        /// 转换未在 10ms 内完成（时钟门控没开 / L011 的 ADCCLK≥4MHz
+        /// 下限不满足？）
+        Timeout,
+        /// 配置非法（外部通道号 >13 / 序列长度 0 或 >8 / out 缓冲不足 /
+        /// chs 与 samples 不等长）
+        BadConfig,
+    }
+
+    /// per-实例 waker（单 ADC 实例）
+    static ADC_WAKER: AtomicWaker = AtomicWaker::new();
+
+    /// 异步 ADC（L010/L011）
+    pub struct LowAdc {
+        regs: &'static pac::ADC,
+    }
+
+    impl LowAdc {
+        /// 初始化：开时钟（APBEN1.adc=bit0，KEY 写保护读改写）→ 基础
+        /// 配置 → 上电稳定 → 挂 NVIC。
+        ///
+        /// * `clk` — ADCCLK 分频（ADCCLK=PCLK/N；L011 注意 ≥4MHz 下限）
+        pub fn new(
+            regs: &'static pac::ADC,
+            clk: LowClk,
+            _irqs: impl Binding<interrupt::ADC>,
+        ) -> Self {
+            // SYSCTRL.APBEN1.ADC（bit0；cw32l010/cw32l011 PAC apben1.adc）。
+            // L012 代组 KEY 写保护：低 16 位为使能位面，写须带 0x5A5A 键
+            // 且保留既有使能位（cw32l012-hal rcc.rs set_bits 实机配方：
+            // reg.write(KEY | (read() & 0xFFFF) | bits)）
+            let sysctrl = unsafe { &*(pac::SYSCTRL_BASE as *const crate::Sysctrl) };
+            let v = sysctrl.apben1.read() & 0xFFFF;
+            sysctrl.apben1.write(crate::SYSCTRL_KEY | v | (1 << 0));
+
+            // 基础配置：EN=1、CONT=0、ENS=0（单通道）、分频按参数；
+            // BGREN/TSEN 粘滞位保留（比较器等模拟块共用，见模块注释）
+            regs.start.write(0); // 停止 + 复位序列游标
+            regs.cr
+                .modify(|v| (v & !(CR_CONT | CR_CLK_MASK | CR_ENS_MASK)) | CR_EN | clk.code());
+            regs.ier.write(0);
+
+            // 上电稳定 max(2µs, 15 ADCCLK)（datasheet tSTAB=15/fADC；手册
+            // EN 后约 1µs——ADCCLK 最低 PCLK/8，15 ADCCLK ≤ 120 PCLK）。
+            // 圈数按每圈 ~4 HCLK 周期估（同 l012 分支）
+            let n = (crate::HCLK_HZ.load(Ordering::Relaxed) * 2 / 1_000_000).max(120) / 4;
+            for _ in 0..n {
+                core::hint::spin_loop();
+            }
+
+            crate::interrupt::nvic_enable::<interrupt::ADC>();
+            LowAdc { regs }
+        }
+
+        /// 内部通道前置条件：按需置 CR.TSEN/CR.BGREN（粘滞；比较器共用
+        /// BGREN 不回清）。BGR 通道或新开的 TS 需 50µs 稳定期（手册
+        /// 30~40µs + 裕量，cw32-hal2 同款 50µs）
+        async fn ensure_internal_ready(&self, want_ts: bool, want_bgr: bool) {
+            let regs = self.regs;
+            let cr = regs.cr.read();
+            let missing_ts = want_ts && cr & CR_TSEN == 0;
+            let missing_bgr = want_bgr && cr & CR_BGREN == 0;
+            if missing_ts || missing_bgr {
+                let mask = if want_ts { CR_TSEN } else { 0 } | if want_bgr { CR_BGREN } else { 0 };
+                regs.cr.modify(|v| v | mask);
+                Timer::after_micros(50).await;
+            }
+        }
+
+        /// 单次转换一个通道（ENS=0 单通道 + 软件触发），等 EOC 异步唤醒，
+        /// 返回 0..4095（右对齐原始 counts）。
+        ///
+        /// 配方：START=0（复位游标）→ 配 SQRCFR/SAMPLE 槽 0 → 清标志 →
+        /// START=1 → 等 EOC → 读 RESULT0。
+        pub async fn read(
+            &mut self,
+            ch: LowChannel,
+            sample: LowSampleCycles,
+        ) -> Result<u16, LowAdcError> {
+            let code = ch.code().ok_or(LowAdcError::BadConfig)?;
+            self.ensure_internal_ready(
+                matches!(ch, LowChannel::TempSensor),
+                matches!(ch, LowChannel::Bgr1v2),
+            )
+            .await;
+            let regs = self.regs;
+            regs.start.write(0); // 停止 + 复位序列游标
+            regs.sqrcfr.write(code); // 槽 0
+            regs.sample.write(sample as u32); // 槽 0
+            regs.icr.write(ICR_CLEAR_EOC_EOS); // R1W0：写 0 清、写 1 保留
+            regs.cr.modify(|v| (v & !CR_ENS_MASK) | CR_EN); // ENS=0 单通道
+            regs.start.write(START_START);
+            // 时长上限：采样 390 + 15 = 405 ADCCLK；最低速档 PCLK/8@8MHz
+            // = 1MHz 时 ≈0.41ms，10ms 软超时裕量充足
+            match with_timeout(Duration::from_millis(10), wait_flag(regs, ISR_EOC, IER_EOC)).await {
+                Ok(()) => {}
+                Err(_) => {
+                    regs.start.write(0);
+                    regs.ier.modify(|v| v & !IER_EOC);
+                    regs.icr.write(ICR_CLEAR_EOC_EOS);
+                    return Err(LowAdcError::Timeout);
+                }
+            }
+            let r = (regs.result0.read() & 0xFFF) as u16;
+            regs.icr.write(ICR_CLEAR_EOC_EOS);
+            Ok(r)
+        }
+
+        /// 序列扫描转换（ENS 模式，1..=8 通道，一次启动按序全部转换）。
+        ///
+        /// * `chs` / `samples` — 通道与采样周期（等长；SAMPLE/SQRCFR 逐槽
+        ///   4bit，本组支持 per-槽采样周期——classic 组没有）
+        /// * `out` — 结果缓冲（长度 ≥ chs.len()，按通道顺序 0..4095）
+        ///
+        /// 配方：START=0 → 逐槽配 SQRCFR/SAMPLE → ENS=n-1 → 清标志 →
+        /// START=1 → 等 EOS → 读 RESULT0..n-1。
+        pub async fn read_sequence(
+            &mut self,
+            chs: &[LowChannel],
+            samples: &[LowSampleCycles],
+            out: &mut [u16],
+        ) -> Result<(), LowAdcError> {
+            let n = chs.len();
+            if n == 0 || n > 8 || samples.len() != n || out.len() < n {
+                return Err(LowAdcError::BadConfig);
+            }
+            let mut codes = 0u32;
+            let mut sams = 0u32;
+            let mut any_ts = false;
+            let mut any_bgr = false;
+            for (i, ch) in chs.iter().enumerate() {
+                let code = ch.code().ok_or(LowAdcError::BadConfig)?;
+                codes |= code << (4 * i);
+                sams |= (samples[i] as u32) << (4 * i);
+                any_ts |= matches!(ch, LowChannel::TempSensor);
+                any_bgr |= matches!(ch, LowChannel::Bgr1v2);
+            }
+            self.ensure_internal_ready(any_ts, any_bgr).await;
+            let regs = self.regs;
+            regs.start.write(0); // 复位序列游标
+            regs.sqrcfr.write(codes);
+            regs.sample.write(sams);
+            regs.icr.write(ICR_CLEAR_EOC_EOS);
+            regs.cr
+                .modify(|v| (v & !(CR_ENS_MASK | CR_CONT)) | CR_EN | ((n as u32 - 1) << 6));
+            regs.start.write(START_START);
+            // 时长上限：8 槽 × (390+15) = 3240 ADCCLK，最低速档 1MHz 时
+            // ≈3.2ms，10ms 软超时贴边但够（L011 的 4MHz 下限档更快）
+            match with_timeout(Duration::from_millis(10), wait_flag(regs, ISR_EOS, IER_EOS)).await {
+                Ok(()) => {}
+                Err(_) => {
+                    regs.start.write(0);
+                    regs.ier.modify(|v| v & !IER_EOS);
+                    regs.icr.write(ICR_CLEAR_EOC_EOS);
+                    regs.cr.modify(|v| v & !CR_ENS_MASK);
+                    return Err(LowAdcError::Timeout);
+                }
+            }
+            let results = [
+                regs.result0.read(),
+                regs.result1.read(),
+                regs.result2.read(),
+                regs.result3.read(),
+                regs.result4.read(),
+                regs.result5.read(),
+                regs.result6.read(),
+                regs.result7.read(),
+            ];
+            for (slot, r) in out.iter_mut().zip(results.iter()) {
+                *slot = (r & 0xFFF) as u16;
+            }
+            regs.icr.write(ICR_CLEAR_EOC_EOS);
+            regs.cr.modify(|v| v & !CR_ENS_MASK); // 恢复单通道模式
+            Ok(())
+        }
+    }
+
+    /// 轮询等待 ISR 标志置位：等待时才开对应 IER 位，IRQ 唤醒后由本
+    /// poll 复查（标志清除由调用方经 ICR R1W0 完成，中断里不动 ISR）
+    async fn wait_flag(regs: &'static pac::ADC, flag: u32, ier_bit: u32) {
+        poll_fn(|cx| {
+            ADC_WAKER.register(cx.waker());
+            if regs.isr.read() & flag != 0 {
+                Poll::Ready(())
+            } else {
+                regs.ier.modify(|v| v | ier_bit);
+                Poll::Pending
+            }
+        })
+        .await;
+    }
+
+    // ================= 中断派发 =================
+
+    fn on_irq(regs: &'static pac::ADC) {
+        let isr = regs.isr.read();
+        // 唤醒等待者并单发压掉 IER 位（下次 poll 会重新打开）；ISR 标志
+        // 由驱动读结果后经 ICR 清除，此处不动
+        if isr & ISR_EOC != 0 {
+            regs.ier.modify(|v| v & !IER_EOC);
+            ADC_WAKER.wake();
+        }
+        if isr & ISR_EOS != 0 {
+            regs.ier.modify(|v| v & !IER_EOS);
+            ADC_WAKER.wake();
+        }
+    }
+
+    /// L010/L011 ADC 中断标记（IRQ12）
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct LowAdcIrq;
+    impl IrqHandler<interrupt::ADC> for LowAdcIrq {
+        fn call() {
+            on_irq(unsafe { &*(pac::ADC_BASE as *const pac::ADC) });
+        }
+    }
+}
+
+#[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+pub use low::*;
