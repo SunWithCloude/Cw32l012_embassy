@@ -78,6 +78,39 @@
   厂商库 `ADC_SingleChMoreModeCfg` cw32f030_adc.c:405-412 含强制 ACCEN
   配方），DMA 侧 RESULT0 固定源 B16 搬入缓冲、占通道 1。序列模式不走
   DMA：结果按序列位轮转 RESULT0..3、手册无按请求选源机制，不做推断。
+- **经典组 UART×DMA**（`Uart::write_dma`/`Uart::read_dma`，f030/f020/
+  l031/l052/l083/r031/w031）：ClassicDma 通道抽象单次全量搬运——发送
+  mem→TDR（占通道 2、`hs::UARTx_TX` 触发）、接收 RDR→mem（占通道 1、
+  `hs::UARTx_RX` 触发），次序与厂商库 `USART_DMACmd` 一致。位面出处：
+  请求使能位与 L012 **同位布局**——f030 厂商库 cw32f030_uart.h:188-189
+  `USART_DMAReq_Tx=0x0080`(CR2[7])/`USART_DMAReq_Rx=0x0040`(CR2[6])、
+  cw32f030_uart.c:462-467 `USART_DMACmd` 写 UARTx->CR2；其余家族厂商头
+  `UARTx_CR2_DMATX_Msk=0x80`/`DMARX_Msk=0x40` 逐家抽验同值（cw32f020.h
+  :7032-7035、cw32l031.h:6001-6004、cw32l052.h:8047-8050、cw32l083.h
+  :8663-8666、cw32r031.h:6001-6004、cw32w031.h:6353-6356）。触发源全
+  经典组 §8.8.4 请求表同段同值（f030 厂商库 cw32f030_dma.h:105-110
+  `DMA_HardTrig_UARTx_RXBufferNE=0x00<<2`…；cw32-hal2 cw32-data/dma
+  各家族 yaml UART1..3 request 0..5 交叉核对），复用 dma.rs 既有
+  `hs::UART1..3_RX/TX` 常量，无新增。f020 的通道 1/2 各有 NVIC 线
+  （DMACH1/DMACH2），`wait` 可用（避开 IRQ11 保留的通道 4/5）。
+  示例 `uart_dma_f030`（PA08/PA09 AF2 回显 + PC13 心跳）。⚠ 语义级实现
+  待实板验证。
+- **经典组 SPI×DMA**（`Spi::transfer_dma`/`Spi::write_dma`，f030/f020/
+  l031/l052/l083/r031/w031）：transfer_dma 双通道全双工（RX=通道 1、
+  TX=通道 2，配置即弃句柄、等待按通道号重取）+ write_dma 只发。**关键
+  家族差异：DMA 请求使能位在 CR1 而非 CR2**——CR1[17]=DMATX/
+  CR1[16]=DMARX（f030 厂商库 cw32f030_spi.h:195-196
+  `SPI_DMAReq_Tx=0x00020000`/`Rx=0x00010000`、cw32f030_spi.c:326-337
+  `SPI_DMACmd` 写 SPIx->CR1；其余家族厂商头 `SPIx_CR1_DMATX_Pos=17`/
+  `DMARX_Pos=16` 逐家抽验同值：cw32f020.h:6535-6538、cw32l031.h
+  :5556-5559、cw32l052.h:7556-7559、cw32l083.h:8103-8106、cw32r031.h
+  :5556-5559、cw32w031.h:5910-5913）。触发源 `hs::SPI1_RX/TX`=0x06/0x07
+  全经典组、`hs::SPI2_RX/TX`=0x08/0x09 有 SPI2 的家族（f030 厂商库
+  cw32f030_dma.h:112-115），同样复用既有常量。ICR 清标志保位：经典组
+  ICR bit0=FLUSH **写 0 会清空发送缓冲/移位寄存器**（cw32f030_spi.c
+  `SPI_FlushSendBuff`），清 OV/RXNE 的掩码除目标位外全 1。f003 无 DMA
+  硬件不接入。示例 `spi_dma_f030`（PA05/06/07 AF5，write_dma +
+  transfer_dma 回环判定）。⚠ 语义级实现待实板验证。
 
 ### 变更
 

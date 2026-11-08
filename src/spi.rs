@@ -8,16 +8,22 @@
 //! 无 KEY、ICR 同为 R1W0——厂商库 `SPIx->ICR &= ~flag` 实锤;F020/F003
 //! 的 CR1 位面与 F030 逐 PAC 比对一致,单实例）。
 //!
-//! # DMA 收发（L012；语义级实现待实板验证）
+//! # DMA 收发（L012 与经典组；语义级实现待实板验证）
 //!
 //! [`Spi::transfer_dma`]（全双工：RX/TX 双通道并行）/[`Spi::write_dma`]
 //! （只发）用 [`crate::dma`] 的通道抽象搬运，硬件触发 SPIx_RX/SPIx_TX
 //! （表 8-8）。**DMA 模式与逐字节 SpiBus 模式互斥**——同一实例同时只能
 //! 用一种传输方式。
 //!
+//! 两代位面差异：L012 的 DMA 请求使能在 CR2[2]/CR2[1]；**经典组的在
+//! CR1[17]/CR1[16]**（厂商库 `SPI_DMAReq_Tx=0x00020000`/`Rx=0x00010000`
+//! 写 `SPIx->CR1`），且经典组 ICR 的 FLUSH 位写 0 会清空发送缓冲——清
+//! 标志时必须保位。触发源取 [`crate::dma::hs::SPI1_TX`] 等（§8.8.4）。
+//!
 //! ⚠ 诚实标注：阻塞版 cw32l012-hal 没有 SPI 的 DMA 实机配方，本实现按
 //! PAC `dma::hs` 触发表（表 8-8）+ PAC/厂商库的 CR2.DMATX/CR2.DMARX 位面
-//! （§22.7）编写，**语义级实现待实板验证**。
+//! （§22.7；经典组 SPIx_CR1_DMATX/DMARX 位面）编写，**语义级实现待实板
+//! 验证**。
 
 use core::future::poll_fn;
 use core::task::Poll;
@@ -647,6 +653,191 @@ impl Spi {
             let _ = self.regs.dr.read();
         }
         self.regs.icr.write(pac::spi::ICR_CLEAR_OV);
+        ch.stop();
+        r
+    }
+}
+
+// ================= DMA 收发（经典组；语义级实现待实板验证） =================
+// 关键位面差异：**DMA 请求使能位在 CR1 而非 CR2**——CR1[17]=DMATX/
+// CR1[16]=DMARX（厂商库 cw32f030_spi.h:195-196 SPI_DMAReq_Tx=0x00020000/
+// Rx=0x00010000，cw32f030_spi.c:326-337 SPI_DMACmd 写 SPIx->CR1；各家族
+// 厂商头 SPIx_CR1_DMATX_Pos=17/DMARX_Pos=16 逐家抽验同值：cw32f020.h:
+// 6535-6538、cw32l031.h:5556-5559、cw32l052.h:7556-7559、cw32l083.h:
+// 8103-8106、cw32r031.h:5556-5559、cw32w031.h:5910-5913；生成 PAC
+// spi::cr1::dmatx/dmarx_MASK 同值）。触发源 dma::hs::SPIx_RX/TX（§8.8.4：
+// SPI1_RX=0x06/SPI1_TX=0x07 全经典组、SPI2_RX=0x08/SPI2_TX=0x09 有 SPI2
+// 的家族；厂商库 cw32f030_dma.h:112-115 DMA_HardTrig_SPIx_RXBufferNE/
+// TXBufferE）。ICR 同为 R1W0（厂商 SPI_ClearFlag = SPIx->ICR &= ~flag）：
+// OV@bit5/RXNE@bit1 写 0 清除；**bit0=FLUSH 写 0 会清空发送缓冲/移位
+// 寄存器**（cw32f030_spi.c SPI_FlushSendBuff），清标志掩码除目标位外全 1
+// （FLUSH 位恒写 1 无动作）。f003 无 DMA 硬件，不接入。
+
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
+impl Spi {
+    /// DMA 发送请求使能（CR1[17]，厂商库 SPI_DMAReq_Tx=0x00020000；PAC 位常量）
+    const CR1_DMATX: u32 = pac::spi::cr1::dmatx_MASK;
+    /// DMA 接收请求使能（CR1[16]，厂商库 SPI_DMAReq_Rx=0x00010000）
+    const CR1_DMARX: u32 = pac::spi::cr1::dmarx_MASK;
+
+    /// 发送方向硬件触发源（§8.8.4 / 厂商库 DMA_HardTrig_SPIx_TXBufferE）。
+    /// SPI2 实例仅 f030 有（其余家族 PAC 只有 SPI1），恒取 SPI1。
+    fn tx_hs(&self) -> u8 {
+        match self.idx {
+            #[cfg(feature = "cw32f030")]
+            1 => crate::dma::hs::SPI2_TX,
+            _ => crate::dma::hs::SPI1_TX,
+        }
+    }
+
+    /// 接收方向硬件触发源（§8.8.4 / 厂商库 DMA_HardTrig_SPIx_RXBufferNE）
+    fn rx_hs(&self) -> u8 {
+        match self.idx {
+            #[cfg(feature = "cw32f030")]
+            1 => crate::dma::hs::SPI2_RX,
+            _ => crate::dma::hs::SPI1_RX,
+        }
+    }
+
+    /// 清残留接收态：排空 RXNE 并经 ICR 清 OV/RXNE（R1W0：目标位写 0）
+    ///
+    /// RXNE 挂着会让 RX 通道第一拍搬走旧字节（整帧错位一字节）；OV 残留
+    /// 污染错误语义。FLUSH@ICR[0] 写 0 会清空发送缓冲，掩码除 OV/RXNE 外
+    /// 全 1（写 1 无动作）。
+    fn drain_rx(&mut self) {
+        while self.regs.isr.read() & ISR_RXNE != 0 {
+            let _ = self.regs.dr.read();
+        }
+        self.regs
+            .icr
+            .write(!(pac::spi::icr::ov_MASK | pac::spi::icr::rxne_MASK));
+    }
+
+    /// DMA 全双工传输（经典组）：rx.len() 字节（占用 DMA 通道 1=RX、通道 2=TX）
+    ///
+    /// 两通道同时在途：TX 通道按 TXE"发送缓冲空"把 tx 逐字节搬进 DR，
+    /// RX 通道按 RXNE"接收缓冲非空"把 DR 逐字节搬进 rx——主机时钟一起，
+    /// 两方向全双工并行推进。`rx` 与 `tx` 长度必须相等、非空、≤65535。
+    ///
+    /// 次序：清残留接收态 → 两通道 `configure`（EN=1）→ 置
+    /// `CR1.DMATX|CR1.DMARX`（厂商库 `SPI_DMACmd` 同款位面）→ 依次 `wait`
+    /// 两通道 TC（先 RX 后 TX；TC 标志保持到 ICR 清除，先后不丢）→ 关两个
+    /// 请求位 → 等 BUSY=0（移位收尾，调用方随后才可拉高软件片选）。
+    ///
+    /// 两通道同时在途而 [`crate::dma::Channel`] 独占借用 `&mut ClassicDma`
+    /// ——配置阶段逐个配好即弃句柄、等待阶段按通道号重取：Channel 是无状态
+    /// 寄存器视图（状态全在 CSR/ISR），重取不丢上下文。通道 1/2 在 f020 上
+    /// 各有 NVIC 线（DMACH1/DMACH2），`wait` 可用（避开无线的通道 4/5）。
+    ///
+    /// **与逐字节 SpiBus 模式互斥**（见模块文档）；长度不合法返回
+    /// [`crate::dma::DmaErrorClassic::BadLength`]。⚠ 语义级实现待实板验证。
+    pub async fn transfer_dma(
+        &mut self,
+        dma: &mut crate::dma::ClassicDma,
+        rx: &mut [u8],
+        tx: &[u8],
+    ) -> Result<(), crate::dma::DmaErrorClassic> {
+        if rx.is_empty() || rx.len() != tx.len() || rx.len() > 0xFFFF {
+            return Err(crate::dma::DmaErrorClassic::BadLength);
+        }
+        self.drain_rx();
+
+        let dr = core::ptr::addr_of!(self.regs.dr) as u32;
+        {
+            let ch = dma.channel(1);
+            ch.configure(&crate::dma::ClassicConfig::periph_to_mem(
+                dr,
+                rx.as_mut_ptr() as u32,
+                rx.len() as u16,
+                crate::dma::ClassicWidth::B8,
+                self.rx_hs(),
+            ));
+        }
+        {
+            let ch = dma.channel(2);
+            ch.configure(&crate::dma::ClassicConfig::mem_to_periph(
+                tx.as_ptr() as u32,
+                dr,
+                tx.len() as u16,
+                crate::dma::ClassicWidth::B8,
+                self.tx_hs(),
+            ));
+        }
+        // 同时开两个方向的 DMA 请求（CR1.DMATX|CR1.DMARX）——首个 TXE 请求
+        // 装填 DR、主机起钟，之后 RXNE/TXE 交替驱动两通道
+        self.regs
+            .cr1
+            .modify(|v| v | Self::CR1_DMATX | Self::CR1_DMARX);
+        let rx_res = {
+            let mut ch = dma.channel(1);
+            ch.wait().await
+        };
+        let tx_res = {
+            let mut ch = dma.channel(2);
+            ch.wait().await
+        };
+        self.regs
+            .cr1
+            .modify(|v| v & !(Self::CR1_DMATX | Self::CR1_DMARX));
+        // 末字节移位收尾（BUSY=0）后再停通道，防残留请求
+        self.wait_idle().await;
+        dma.channel(1).stop();
+        dma.channel(2).stop();
+        rx_res?;
+        tx_res?;
+        Ok(())
+    }
+
+    /// DMA 只写（经典组）：tx.len() 字节（占用 DMA 通道 2；TXE 触发）
+    ///
+    /// 发送伴随收到的字节无人读走：中间字节上溢（ISR.OV）、末字节挂在
+    /// RXNE——返回前排空 RXNE 并经 ICR 清 OV/RXNE（R1W0），恢复到与逐字节
+    /// `write`（每字节读走即弃）相同的干净状态。⚠ 若实板验证发现本款
+    /// SPI IP 上溢会停收发（TX 随之停摆），改用 [`Spi::transfer_dma`]
+    /// 把接收侧一并 DMA 走。
+    ///
+    /// **与逐字节 SpiBus 模式互斥**（见模块文档）；空缓冲或 >65535 字节
+    /// 返回 [`crate::dma::DmaErrorClassic::BadLength`]。⚠ 语义级实现待实板
+    /// 验证。
+    pub async fn write_dma(
+        &mut self,
+        dma: &mut crate::dma::ClassicDma,
+        tx: &[u8],
+    ) -> Result<(), crate::dma::DmaErrorClassic> {
+        if tx.is_empty() || tx.len() > 0xFFFF {
+            return Err(crate::dma::DmaErrorClassic::BadLength);
+        }
+        // 清残留接收态（同 transfer_dma：防旧 RXNE 抢占/污染语义）
+        self.drain_rx();
+
+        let cfg = crate::dma::ClassicConfig::mem_to_periph(
+            tx.as_ptr() as u32,
+            core::ptr::addr_of!(self.regs.dr) as u32,
+            tx.len() as u16,
+            crate::dma::ClassicWidth::B8,
+            self.tx_hs(),
+        );
+        let mut ch = dma.channel(2);
+        ch.configure(&cfg); // EN=1，等 TXE 请求
+        self.regs.cr1.modify(|v| v | Self::CR1_DMATX);
+        let r = ch.wait().await;
+        self.regs.cr1.modify(|v| v & !Self::CR1_DMATX);
+        // 末字节移位收尾（BUSY=0）后再排空接收侧、停通道
+        self.wait_idle().await;
+        while self.regs.isr.read() & ISR_RXNE != 0 {
+            let _ = self.regs.dr.read();
+        }
+        self.regs
+            .icr
+            .write(!(pac::spi::icr::ov_MASK | pac::spi::icr::rxne_MASK));
         ch.stop();
         r
     }

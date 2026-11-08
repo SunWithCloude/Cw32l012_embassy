@@ -11,7 +11,7 @@
 //! | UART2 | PA07=TXD / PA06=RXD（AF1）     |
 //! | UART3 | PA04=TXD / PA05=RXD（AF1）     |
 //!
-//! # DMA 收发（L012，单次全量搬运；语义级实现待实板验证）
+//! # DMA 收发（L012 与经典组，单次全量搬运；语义级实现待实板验证）
 //!
 //! [`Uart::write_dma`]/[`Uart::read_dma`] 用 [`crate::dma`] 的通道抽象一次
 //! 搬完整段缓冲：发送 mem→TDR、接收 RDR→mem，硬件触发 UARTx_TX/UARTx_RX
@@ -19,10 +19,18 @@
 //! 只能用一种传输方式（三套方式的 IER/CR2 状态机互不感知，混用前先让
 //! 另一方式收尾）。
 //!
+//! 两代位面：L012 的 DMA 请求使能在 CR2[7]/CR2[6]（厂商库
+//! `UART_DMAReq_Tx/Rx`）；经典组（f030/f020/l031/l052/l083/r031/w031）
+//! **同位布局**——f030 厂商库 `USART_DMAReq_Tx=0x0080`/`USART_DMAReq_Rx=
+//! 0x0040` 同写 CR2（`USART_DMACmd`），其余家族厂商头
+//! `UARTx_CR2_DMATX_Msk=0x80`/`DMARX_Msk=0x40` 同值（逐家抽验，见
+//! [`Uart::write_dma`] 文档），触发源取 [`crate::dma::hs::UART1_TX`] 等
+//! （全经典组 §8.8.4 请求表同段同值）。
+//!
 //! ⚠ 诚实标注：阻塞版 cw32l012-hal 没有 UART/SPI 的 DMA 实机配方，本实现
 //! 按 PAC `dma::hs` 触发表（表 8-8）+ 厂商库 `UART_TransmitDMA`/
-//! `UART_ReceiveDMA`/`UART_DMACmd`（cw32l012_uart.c/.h）的位面与次序编写，
-//! **语义级实现待实板验证**。
+//! `UART_ReceiveDMA`/`UART_DMACmd`（cw32l012_uart.c/.h；f030 同名
+//! `USART_DMACmd`）的位面与次序编写，**语义级实现待实板验证**。
 
 use core::future::poll_fn;
 use core::task::Poll;
@@ -1020,6 +1028,147 @@ impl Uart {
         self.regs.cr2.modify(|v| v | udma::CR2_DMARX);
         let r = ch.wait().await;
         self.regs.cr2.modify(|v| v & !udma::CR2_DMARX);
+        ch.stop();
+        r
+    }
+}
+
+// ================= DMA 收发（经典组，单次全量搬运；语义级实现待实板验证） =================
+// 位面与次序按厂商库编写：cw32f030_uart.h:188-189 USART_DMAReq_Tx=0x0080
+// （CR2[7]）/ USART_DMAReq_Rx=0x0040（CR2[6]），cw32f030_uart.c:462-467
+// `USART_DMACmd` 写 UARTx->CR2——与 L012 同位布局，且经典组生成 PAC 已收编
+// 位常量（uart::cr2::dmatx/dmarx_MASK；其余家族厂商头逐家抽验同值：
+// cw32f020.h:7032-7035、cw32l031.h:6001-6004、cw32l052.h:8047-8050、
+// cw32l083.h:8663-8666、cw32r031.h:6001-6004、cw32w031.h:6353-6356）。
+// 触发源 dma::hs::UARTx_RX/TX（全经典组手册 §8.8.4 请求表同段同值；厂商库
+// cw32f030_dma.h:105-110 DMA_HardTrig_UARTx_RXBufferNE=0x00<<2 …
+// UART3_TXBufferE=0x05<<2）。
+
+/// UART 经典组 DMA 请求使能位与触发源选择
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
+mod cudma {
+    /// DMA 发送请求使能（CR2[7]，厂商库 USART_DMAReq_Tx=0x0080；PAC 位常量）
+    pub const CR2_DMATX: u32 = crate::pac::uart::cr2::dmatx_MASK;
+    /// DMA 接收请求使能（CR2[6]，厂商库 USART_DMAReq_Rx=0x0040）
+    pub const CR2_DMARX: u32 = crate::pac::uart::cr2::dmarx_MASK;
+
+    /// 发送方向硬件触发源（§8.8.4 / 厂商库 DMA_HardTrig_UARTx_TXBufferE）。
+    /// UART2/3 实例仅 f030 有（其余家族 PAC 只有 UART1），恒取 UART1。
+    pub fn tx_hs(idx: usize) -> u8 {
+        match idx {
+            #[cfg(feature = "cw32f030")]
+            1 => crate::dma::hs::UART2_TX,
+            #[cfg(feature = "cw32f030")]
+            2 => crate::dma::hs::UART3_TX,
+            _ => crate::dma::hs::UART1_TX,
+        }
+    }
+
+    /// 接收方向硬件触发源（§8.8.4 / 厂商库 DMA_HardTrig_UARTx_RXBufferNE）
+    pub fn rx_hs(idx: usize) -> u8 {
+        match idx {
+            #[cfg(feature = "cw32f030")]
+            1 => crate::dma::hs::UART2_RX,
+            #[cfg(feature = "cw32f030")]
+            2 => crate::dma::hs::UART3_RX,
+            _ => crate::dma::hs::UART1_RX,
+        }
+    }
+}
+
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
+impl Uart {
+    /// DMA 发送：整段 buf 搬进 TDR（单次全量搬运，占用经典组 DMA 通道 2）
+    ///
+    /// 触发源 UARTx_TX（TXBE"发送缓冲空"事件，§8.8.4 / 厂商库
+    /// `DMA_HardTrig_UARTx_TXBufferE`）；mem→periph：源自增、TDR 固定、
+    /// 8bit、BLOCK。次序：通道 `configure`（EN=1）→ 置 `CR2.DMATX`
+    /// （空闲时 TXBE 已置位，首个请求立即到）→ `wait` 等 DMA TC → 关
+    /// `CR2.DMATX`——厂商库 `USART_DMACmd` 同款位面（CR2[7]）。
+    ///
+    /// DMA TC = 全部字节已写入 TDR；此时行上最后一字节可能仍在移位，
+    /// 要等物理发完再收尾（如半双工转向）的调用方随后
+    /// `embedded_io_async::Write::flush`（等 ISR.TC）。
+    ///
+    /// **与逐字节/Buffered 模式互斥**（见模块文档）；空缓冲或 >65535
+    /// 字节返回 [`crate::dma::DmaErrorClassic::BadLength`]。⚠ 语义级实现
+    /// 待实板验证。
+    pub async fn write_dma(
+        &mut self,
+        dma: &mut crate::dma::ClassicDma,
+        buf: &[u8],
+    ) -> Result<(), crate::dma::DmaErrorClassic> {
+        if buf.is_empty() || buf.len() > 0xFFFF {
+            return Err(crate::dma::DmaErrorClassic::BadLength);
+        }
+        let cfg = crate::dma::ClassicConfig::mem_to_periph(
+            buf.as_ptr() as u32,
+            core::ptr::addr_of!(self.regs.tdr) as u32,
+            buf.len() as u16,
+            crate::dma::ClassicWidth::B8,
+            cudma::tx_hs(self.idx),
+        );
+        let mut ch = dma.channel(2);
+        ch.configure(&cfg); // EN=1，等 TXBE 请求
+        self.regs.cr2.modify(|v| v | cudma::CR2_DMATX);
+        let r = ch.wait().await;
+        self.regs.cr2.modify(|v| v & !cudma::CR2_DMATX);
+        ch.stop(); // 收尾清通道 EN 防残留请求（ADC read_dma 同款）
+        r
+    }
+
+    /// DMA 接收：恰好收满 buf.len() 字节（单次全量搬运，占用经典组 DMA 通道 1）
+    ///
+    /// 触发源 UARTx_RX（RC"接收完成"事件，§8.8.4 / 厂商库
+    /// `DMA_HardTrig_UARTx_RXBufferNE`）；periph→mem：RDR 固定、目的自增、
+    /// 8bit、BLOCK。启动前清残留 RC 与错误标志（ICR R1W0：对应位写 0），
+    /// 保证触发请求从干净电平开始——启动前已到达但未被读走的字节会被丢弃。
+    ///
+    /// DMA 路径不逐字节上报接收错误（经典 UART 仅 FE/PE，只置 ISR，不影响
+    /// 搬运）；需要错误感知的收流用逐字节 `read_byte`/`Read::read`。
+    ///
+    /// **与逐字节/Buffered 模式互斥**（见模块文档）；空缓冲或 >65535
+    /// 字节返回 [`crate::dma::DmaErrorClassic::BadLength`]。⚠ 语义级实现
+    /// 待实板验证。
+    pub async fn read_dma(
+        &mut self,
+        dma: &mut crate::dma::ClassicDma,
+        buf: &mut [u8],
+    ) -> Result<(), crate::dma::DmaErrorClassic> {
+        if buf.is_empty() || buf.len() > 0xFFFF {
+            return Err(crate::dma::DmaErrorClassic::BadLength);
+        }
+        // 清残留 RC + 错误位（R1W0：写 0 清除，其余位写 1 无动作）
+        let isr_clear = ub::ICR_NONE & !(ub::ISR_RC | ub::ERR_ALL);
+        self.regs.icr.write(isr_clear);
+        let cfg = crate::dma::ClassicConfig::periph_to_mem(
+            core::ptr::addr_of!(self.regs.rdr) as u32,
+            buf.as_mut_ptr() as u32,
+            buf.len() as u16,
+            crate::dma::ClassicWidth::B8,
+            cudma::rx_hs(self.idx),
+        );
+        let mut ch = dma.channel(1);
+        ch.configure(&cfg); // EN=1，等 RC 请求
+        self.regs.cr2.modify(|v| v | cudma::CR2_DMARX);
+        let r = ch.wait().await;
+        self.regs.cr2.modify(|v| v & !cudma::CR2_DMARX);
         ch.stop();
         r
     }
