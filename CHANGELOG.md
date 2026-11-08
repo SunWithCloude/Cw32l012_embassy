@@ -188,6 +188,26 @@
   地址 NACK（空总线预期）,寄存器链逐项验证。
 - "i2c/spi 暂为 L012 专属"状态就此终结:四大件（GPIO/UART/SPI/I2C）
   双家族全覆盖。
+- **L012 I2C 升级为单事务重复起始**：`embedded-hal-async::i2c::I2c::
+  transaction` 从"逐 Operation 独立 START…STOP"改为整个事务单次
+  START、方向切换处重复 START、末操作后 STOP（与 F030 经典分支及
+  eha 契约对齐；`read`/`write`/`write_read` 走 trait 默认实现自动
+  受益）。命令序列出处：MTDR 寄存器表对 CMD=100/101 的原文即
+  "(Repeated)START"（UM V1.2 §23.8.11，页 554；V1.4 同款）；主机发/
+  收流程以 CMD=100 发 SLA+W/SLA+R、收尾"发 STOP 或 Repeated START"
+  （§23.4.4.1/§23.4.4.2，页 538-539）；厂商库
+  `I2C_MasterSTART_Addr7b`/`I2C_MasterReSTART_Addr7b` 写入的 MTDR 字
+  逐字相同、仅 BUSY 预检不同（cw32l012_lpi2c.c:476-493/504-517，
+  h:186 `I2C_Cmd_Tx_RepSTART_Data_Rx_ACK`），写指针+重复起始读参考
+  `I2C_MasterReceiveDataFromSlave`（c:1105-1200）。**顺带修正**：读
+  方向地址字节由 `CMD_START_NACK`（CMD=101 期待 NACK）改为
+  `CMD_START_ACK`（CMD=100）——v0.1 编码与上述手册/厂商库/源
+  cw32l012-hal（`start_addr` 的 `expect_nack` 恒传 false）三处证据
+  冲突；读长 >256 字节按 RXCOUNT 上限分块排队（DATA 字段 8 位，
+  块间不重发地址，修复 v0.1 的 `(n-1) as u8` 静默截断）；主机侧
+  ACK/NACK（STAR.TXNACK，§23.8.22）保持复位默认不动，与厂商库主机
+  接收流程一致。新增 `i2c_transaction` 示例（LM75 写指针+重复起始
+  读，⚠ 仅编译未上板）。29 项测试不减、`cargo fmt -p` 干净。
 
 ## [0.2.0] - 2026-10-24
 
