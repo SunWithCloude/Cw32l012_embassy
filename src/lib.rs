@@ -100,7 +100,22 @@ compile_error!(
     "必须启用一个家族 feature:cw32l012 / cw32l010 / cw32l011 / cw32f030 / cw32l031 / cw32l052 / cw32r031 / cw32w031 / cw32f020 / cw32f003"
 );
 
-#[cfg(any(feature = "cw32l012", feature = "cw32f030", feature = "cw32f020"))]
+// ADC 四套 IP：L012（l012 分支）/经典组 f030/f020/f003（classic 分支）/
+// 8 槽扫描组 l031/l052/l083/r031/w031（scan8 分支）/低配代 l010/l011
+// （low 分支）——分组依据见 src/adc.rs 模块注释（各 PAC 逐寄存器比对）
+#[cfg(any(
+    feature = "cw32l012",
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32f003",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031",
+    feature = "cw32l010",
+    feature = "cw32l011"
+))]
 pub mod adc;
 #[cfg(feature = "cw32l012")]
 pub mod dac;

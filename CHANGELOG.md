@@ -111,6 +111,33 @@
   `SPI_FlushSendBuff`），清 OV/RXNE 的掩码除目标位外全 1。f003 无 DMA
   硬件不接入。示例 `spi_dma_f030`（PA05/06/07 AF5，write_dma +
   transfer_dma 回环判定）。⚠ 语义级实现待实板验证。
+- **ADC 补齐剩余家族（三组新 IP，分组经各 PAC 逐寄存器比对锁定）**：
+  - **8 槽扫描组**（l031/l052/l083/r031/w031 → `Scan8Adc` 分支）：
+    经典代配方的 8 槽扩展——五家族 PAC 的 ADC 结构体逐寄存器同构
+    （cw32l031/cw32r031/cw32w031 三份 adc 位段常量 diff 为空；l052/
+    l083 仅 TRIGGER 多外设触发源位），vs f030 classic 差异：无 SQR@0x0C、
+    序列拆 SQR0（ENS[18:16] 3bit + 槽 0..3）+SQR1（槽 4..7）、结果 8 个、
+    CR1 无 DMAEN、CR0 无 BGREN。API：`new`/`read`/`read_sequence`
+    （1..=8 通道）/`set_vref`/`enable_trigger`（五家族公共触发位子集）/
+    `disable_trigger`；ADC-DMA 联动本轮不做。示例 `adc_read_l031`。
+  - **f003 并入经典组分支**（`ClassicAdc` cfg 扩家族）：寄存器面与
+    f030 逐位段同款（cw32f003-pac：CR0 含 BGREN bit4/BUF bit13、
+    SQR.ENS[17:16]、READY bit7），差异=CR1 无 DMAEN（无 DMA 硬件，
+    `read_dma`/`ClassicTrig` 仅 f030/f020 可用）+ 尾部 14 位扩展
+    RESULT140..143/ENABLE14（不触碰，仍 12 位）+ 通道-引脚映射不同
+    （IN0=PB2、IN1=PA1…）。`disable_trigger` 三家族通用。示例
+    `adc_read_f003`。
+  - **L010/L011 低配代组**（`LowAdc` 分支）：**与 L012 不同构的近亲
+    IP**（纠正任务面「门控同 L012 → 疑同构」假设）——厂商头文件比对
+    （cw32l010.h:164-379 Size=128 / cw32l011.h:167-388 vs cw32l012.h
+    Size=124）：START@0x08/SAMPLE@0x28/SQRCFR@0x2C/RESULT0@0x40/
+    IER@0x74，CR 位序 EN/BGREN/TSEN/CONT/CLK[5:4]/ENS[8:6]（L012 为
+    EN/CONT/CLK[3:2]/ENS[6:4] 且 BGREN/TSEN 在独立 BGR 控制器）。无
+    BGR 外设/无出厂校准字/无 READY 位/无 DMA；内部通道 TS(IN14)/
+    BGR1.2(IN15) 实锤存在（40µs 采集下限，原始 counts）。采样档同
+    L012 表但末档 **390**（非 518）+ 15 比较周期。API：`new`（APBEN1
+    bit0 KEY 读改写）/`read`/`read_sequence`（1..=8 槽，per-槽采样
+    周期）。示例 `adc_read_l010`。
 
 ### 变更
 
