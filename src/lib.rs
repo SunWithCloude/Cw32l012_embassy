@@ -141,7 +141,18 @@ pub mod i2c;
 pub mod interrupt;
 #[cfg(feature = "cw32f030")]
 pub mod rcc;
-#[cfg(feature = "cw32l012")]
+// RTC 两套 IP：L012（KEY+WAIT+PSC 预分频）与经典组（ACCESS/WINDOW 访问窗、
+// 无预分频、日历字段更宽）——分组依据见 src/rtc.rs 分支头注；f003 无 RTC
+#[cfg(any(
+    feature = "cw32l012",
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 pub mod rtc;
 pub mod spi;
 pub mod time_driver;
@@ -159,7 +170,20 @@ pub mod time_driver;
 ))]
 pub mod timer;
 pub mod uart;
-#[cfg(feature = "cw32l012")]
+// WDT 两代看门狗：L012（RC10K 10kHz 标称 + APBEN2 KEY 门控）与经典组
+// （RC10K 专属振荡器 + 先启动后配置的键值协议 + APBEN1 无 KEY 门控）——
+// IWDT 位面同款、WWDGT 逐位段一致，配方差异见 src/wdt.rs 分支头注
+#[cfg(any(
+    feature = "cw32l012",
+    feature = "cw32f030",
+    feature = "cw32f020",
+    feature = "cw32f003",
+    feature = "cw32l031",
+    feature = "cw32l052",
+    feature = "cw32l083",
+    feature = "cw32r031",
+    feature = "cw32w031"
+))]
 pub mod wdt;
 
 #[cfg(feature = "cw32f003")]

@@ -26,14 +26,14 @@ Two hardware generations: the **L012 generation** (`cw32l010`/`cw32l011`/`cw32l0
 | `i2c` | async I2C master (`embedded-hal-async::i2c::I2c`) on 10 of 11 families (L011 has no I2C hardware): L012 keeps its command-FIFO controller; the other nine use the classic 8051-style state-machine controller, whose transactions issue a single START with repeated-START between operations (F030 verified on board, remaining classic parts compile-level from per-PAC bit-plane comparison) |
 | `timer` | (L012) GTIM1-4 single-channel edge-aligned PWM (`SetDutyCycle`, 0..=10000 full scale) with `wait_update()` for async update-event ticks; plain PWM needs no IRQ binding |
 | `adc` | two IPs behind one module: L012 ADC1/2 async single/sequence conversion with internal channels (`vdda_mv()` via the 1.2 V BGR, `temperature_mc()`) and `read_sequence_dma()`; classic group (F030/F020, a completely different IP) separately implemented — async single/4-result sequence, internal channels VDDA/3 + temperature + 1.2 V BGR, software-triggered path |
-| `rtc` | (L012) BCD calendar read/write (`now`/`set_datetime`) plus async alarm (`wait_alarm`, the KEY unlock sequence wrapped in a critical section), LSE/LSI time base |
-| `wdt` | (L012) IWDT independent and WWDGT window watchdog as non-async thin wrappers, with a feed-window solver (`WindowConfig::for_feed_interval`) |
+| `rtc` | two IPs behind one module: L012 `Rtc` — BCD calendar read/write (`now`/`set_datetime`) plus async alarm (`wait_alarm`, the KEY unlock sequence wrapped in a critical section), LSE/LSI time base; classic group `ClassicRtc` (F030/F020/L031/L052/L083/R031/W031, a different IP — ACCESS/WINDOW running-access window instead of the WAIT bit, no prescaler/subsecond, wider DATE fields) with the same method surface and async alarm semantics. No RTC hardware on F003 |
+| `wdt` | two generations: L012 `Iwdt`/`Wwdgt`; classic `ClassicIwdt`/`ClassicWwdgt` (F003/F020/F030/L031/L052/L083/R031/W031) — same key sequence and bit plane, but the vendor library requires start-before-config for IWDT (0xCCCC → unlock → CR/ARR → sync wait → 0xAAAA feed), the dedicated RC10K counts at a nominal 10 kHz per the vendor macro (datasheet electrical table says typical 8 kHz, 4–12 kHz over temperature), and gates live in APBEN1 without a key. Non-async thin wrappers with a feed-window solver (`WindowConfig::for_feed_interval` / `ClassicWindowConfig::for_feed_interval`) |
 | `dac` | (L012) dual-channel 12-bit output (`set_ch1`/`set_ch2`/`set_both` + readback) with DMA waveform output — one-shot `write_dma` and `start_dma_loop`/`stop_dma` ring mode (GTIM TRGO as trigger); DAC→ADC internal loopback example included |
 | `dma` | two generations: L012 `Dma` — 4 channels (IRQ9 `DMA12` = ch1/2, IRQ10 `DMA34` = ch3/4) with `mem_to_mem`/`periph_to_mem`/`mem_to_periph`; classic `ClassicDma` (F020/F030/L031/L052/L083/R031/W031) — 5 channels on F030/F020/L083, 4 on the L031 group, **no DMA hardware on F003/L010/L011** (F020 channels 4/5 have no NVIC line, polling only). Hardware trigger source tables (`pac::dma::hs`) per generation |
 | `critical-section-impl` | PRIMASK implementation (on by default; one per firmware) |
 | `defmt` | optional feature: driver error/config types (30+) derive `defmt::Format`; the `rtt_hello` example wires defmt-rtt end to end |
 
-Twenty runnable examples live in `examples/` (blink, UART echo/buffered/DMA, SPI loopback/DMA, I2C scan, ADC async/DMA/F030, DAC wave and DAC→ADC loop, RTC alarm, WDT, DMA mem2mem on both generations, timer PWM, RTT hello), each gated by its family feature in `Cargo.toml`.
+Twenty-nine runnable examples live in `examples/` (blink, UART echo/buffered/DMA, SPI loopback/DMA, I2C scan, ADC async/DMA/F030, DAC wave and DAC→ADC loop, RTC alarm and WDT demo on both the L012 and F030 generations, DMA mem2mem on both generations, timer PWM, RTT hello), each gated by its family feature in `Cargo.toml`.
 
 ## Getting started
 
@@ -137,8 +137,10 @@ reprogram otherwise produces.
 
 ## Roadmap (not yet supported)
 
-- `timer` / `rtc` / `wdt` / `dac` on the non-L012 families (per-family register
-  surfaces; classic-group ADC already landed for F030/F020)
+- `timer` / `dac` on the non-L012 families (per-family register
+  surfaces; classic-group ADC already landed for F030/F020, classic-group
+  rtc/wdt landed for the seven classic families — semantics-level,
+  pending on-hardware validation)
 - ADC for the L031 group / F003 / L010 / L011 (yet another IP, not yet wired)
 - I2C repeated-start on the L012 command-FIFO controller (the classic
   controller already runs single-START transactions)
