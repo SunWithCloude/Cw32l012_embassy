@@ -6,6 +6,36 @@
 
 ### 新增
 
+- **FLASH 自编程**（`flash` 模块，L012 先行——经典家族 FLASH 是另一套
+  IP，本轮未做，模块头注已注明）：片上 FLASH 读 / 页擦除 / 编程，
+  参数存储与校准数据落盘的底层。API：`Flash::new(p.flashctrl)`（自动开
+  `AHBEN.FLASH` 配置时钟——hal 上板实锤：缺时钟时 CR1/CR2/PAGELOCK 写
+  全被静默丢弃）、关联函数 `read_u8`/`read_u32`/`read_slice`（范围校验 +
+  `Result`，不 panic）、`unsafe erase_page(page)` / `program_slice(addr,
+  &[u8])`（半字对齐 + 奇数尾 0xFF 填充凑半字 + 强制同页，4 对齐且 4 倍数
+  长度走纯字路径）/ `write_page(page, &[u8])`（擦+写组合）；错误类型
+  `FlashError`（BadPage/AddrRange/CrossPage/BadAlign/Timeout + ISR 错误位
+  翻译 NotErased/PageLocked/PcPage/CacheOn/SdkRegion）。页解锁/回锁为每
+  操作自动（阻塞版同款选择）。寄存器配方三源交叉核对：阻塞版
+  `cw32l012-hal/src/flash.rs`（**实机验证过**，TESTING.md flash_store
+  条目：第 127 页掉电计数器跨复位累加 OK，两条静默失败坑——AHBEN.FLASH
+  时钟、MODE 须"或"进现有 CR1——都收进本驱动）；厂商库
+  `cw32l012_flash.c`（ErasePage 字节写触发 / WriteWords 字对齐 /
+  WriteHalfWords 半字对齐 / PAGELOCK 每 8 页一位 / 0x5A5A KEY）；手写 PAC
+  `flash::` 位定义（§7.10）。页参数 512B×128 页（厂商
+  FLASH_PAGES_SIZE/FLASH_BYTES_SIZE）。BUSY 无中断可用（IER 仅
+  PROG/PAGELOCK/PC 三个错误位）→ 擦写为**有界忙等**（页擦典型 3~5ms，
+  hal 同款 200 万轮上限），模块文档如实披露阻塞面；安全注释逐条给出处：
+  擦写期间取指由硬件停顿（厂商库 flash 内运行配方 + hal 上板），唯一硬件
+  禁区是 PC 所在页（ISR.PC），代码区其余页的误擦防护交 unsafe 契约（不引
+  链接脚本符号，保持库对自定义链接脚本中立）。读入口与阻塞版差异：hal
+  是"安全函数内裸解引用任意地址"，本版改为范围校验后解引用（0..0x10000
+  恒映射）+ Err，声音性更严。示例 `flash_store`（u64 掉电计数器：magic +
+  count + 反码 20 字节记录，擦→写→回读验证，掉电语义如实声明——编程中
+  途掉电靠反码检出、擦除窗口丢记录为单页方案固有；PC13 反馈 + `__etext`
+  观测量）。4 项新单测（页参数 / 拆分路径 / 覆盖不变量），38 项不减、
+  clippy -D warnings 干净。⚠ 语义级实现待实板验证（阻塞版同配方，字
+  路径已由 hal 上板背书，半字引子/收尾路径未单独上板）。
 - **经典组 RTC**（`ClassicRtc`，f030/f020/l031/l052/l083/r031/w031；f003
   无 RTC 硬件）：与 L012 不同 IP 的另一套日历——同款 `0xCA`→`0x53` KEY
   解锁（**上锁字 0x55**，RTC_KEY_LOCKW，厂商 cw32f030_rtc.h:347；L012

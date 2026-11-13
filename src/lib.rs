@@ -133,6 +133,9 @@ pub mod dma;
     feature = "cw32w031"
 ))]
 pub mod dma;
+// FLASH 自编程：L012 先行（另一代 IP，见 src/flash.rs 模块头注）
+#[cfg(feature = "cw32l012")]
+pub mod flash;
 pub mod gpio;
 // I2C 覆盖 L012/F030/F020/F003/L010(经典组同构 8051 状态机外设,编译级
 // 接入;L011 无 I2C 硬件)
