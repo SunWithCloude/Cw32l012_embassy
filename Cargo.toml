@@ -213,3 +213,7 @@ required-features = ["rt", "cw32f030"]
 [[example]]
 name = "wdt_demo_f030"
 required-features = ["rt", "cw32f030"]
+
+[[example]]
+name = "opa"
+required-features = ["rt", "cw32l012"]

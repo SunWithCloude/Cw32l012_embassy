@@ -139,6 +139,10 @@ pub mod gpio;
 #[cfg(not(feature = "cw32l011"))]
 pub mod i2c;
 pub mod interrupt;
+// OPA 运放：L012 家族独占（11 家族 PAC 里只有 cw32l012-pac 有 Opa 块，
+// 经典组+l010/l011 无运放硬件）——依据见 src/opa.rs 模块头注
+#[cfg(feature = "cw32l012")]
+pub mod opa;
 #[cfg(feature = "cw32f030")]
 pub mod rcc;
 // RTC 两套 IP：L012（KEY+WAIT+PSC 预分频）与经典组（ACCESS/WINDOW 访问窗、

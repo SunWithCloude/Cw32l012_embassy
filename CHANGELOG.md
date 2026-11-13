@@ -6,6 +6,30 @@
 
 ### 新增
 
+- **`opa` 模块（L012 独占）**：OPA1/OPA2 片上运放（手册 §29）。家族覆盖
+  结论（11 个家族 PAC 逐一 grep `Opa` 块，2026-11-14）：只有
+  cw32l012-pac 有运放（OPA1/OPA2 @0x4000_00B0/B8）；经典组
+  f003/f020/f030/l031/l052/l083/r031/w031 与 l010/l011 均无 OPA 硬件
+  （有 COMP 比较器、无运放），故非 `cw32l012` feature 不编译、无经典
+  分支。API 与阻塞版 `cw32l012-hal/src/opa.rs` 对齐、embassy 所有权风格
+  （`Opa::new_opa1/new_opa2` 自行使能 **APBEN2[9]** 时钟——TESTING.md
+  analog_loop 实测坑：门控在 APBEN2 不在 APBEN1，写错 CR 读回恒为复位
+  值 0xE000、配置静默失效）：`configure`/`set_mode`（External/
+  `Pga(×2..×32)`/Follower）、`enable_inputs`（CR 导通位掩码，hal 同
+  签名）+ 按实例引脚映射的 `enable_input_pin`/`enable_output_pin`
+  （表 29-1：OPA1 INP1=PA03/INP3=PB01/OUT=PB00，OPA2 INP1=PA04/
+  INP3=PB00/OUT=PB01，厂商库 cw32l012_opa.h `AFx_*` 宏同款只动
+  GPIOx_ANALOG；端口时钟读改写保留其它外设使能位）、电平/触发双校准
+  （`start_level_calibration`/`stop_calibration`/`trigger_calibration`/
+  `is_calibrating`）、`set_cal_clock_div`（>7 返回
+  `OpaError::BadCalClockDiv`）。校准时长按本仓 PAC 口径
+  `8 << CALPERIOD` 个 OPACLK（§29.6；厂商库宏名 AZCLK16.. 暗示
+  `16 << code`，差一倍不影响自动结束，文档注明待板核对）。输出脚即
+  ADC 通道（表 25-4：IN8=PB00/IN9=PB01），示例 `opa`：跟随器片内回环
+  （DAC_OUT1→OPA1→PB00→ADC IN8 读回——阻塞版 analog_loop 2026-10-23
+  板验路径的 embassy 版）+ PGA ×2 演示（DAC_OUT2→OPA2→PB01→ADC IN9，
+  ⚠ 内部 PGA 反馈是否需负端外接未上板核对，PGA_ERR 记录实测偏差）。
+  7 项宿主测试（PGA/偏置/校准编码 + 引脚映射表逐项断言）。
 - **经典组 RTC**（`ClassicRtc`，f030/f020/l031/l052/l083/r031/w031；f003
   无 RTC 硬件）：与 L012 不同 IP 的另一套日历——同款 `0xCA`→`0x53` KEY
   解锁（**上锁字 0x55**，RTC_KEY_LOCKW，厂商 cw32f030_rtc.h:347；L012
