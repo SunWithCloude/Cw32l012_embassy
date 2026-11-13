@@ -16,19 +16,21 @@ targets = ["thumbv6m-none-eabi"]
 features = ["cw32l012"]
 
 [dependencies]
-# 家族 PAC(互斥,由 feature 决定):L012 用手写核对版,其余家族用
-# cw32-pacs 统一仓的生成版(同一份生成器产物)
-cw32l012-pac = { path = "../cw32l012-pac", version = "0.2", default-features = false, optional = true }
-cw32f030-pac = { path = "../cw32-pacs/crates/cw32f030-pac", optional = true }
-cw32f020-pac = { path = "../cw32-pacs/crates/cw32f020-pac", optional = true }
-cw32f003-pac = { path = "../cw32-pacs/crates/cw32f003-pac", optional = true }
-cw32l010-pac = { path = "../cw32-pacs/crates/cw32l010-pac", optional = true }
-cw32l011-pac = { path = "../cw32-pacs/crates/cw32l011-pac", optional = true }
-cw32l031-pac = { path = "../cw32-pacs/crates/cw32l031-pac", optional = true }
-cw32l052-pac = { path = "../cw32-pacs/crates/cw32l052-pac", optional = true }
-cw32r031-pac = { path = "../cw32-pacs/crates/cw32r031-pac", optional = true }
-cw32w031-pac = { path = "../cw32-pacs/crates/cw32w031-pac", optional = true }
-cw32l083-pac = { path = "../cw32-pacs/crates/cw32l083-pac", optional = true }
+# 家族 PAC(互斥,由 feature 决定):L012 用手写核对版(git 依赖——crates.io
+# 上 cw32l012-pac 名字被一份有缺陷的 svd2rust 版占用,待换名发布),其余
+# 家族用已发布的生成版。生成版用 `=0.1.x` 精确钉版:寄存器层任何自动
+# 升级都可能破坏位面假设,升级必须手动改版本号并重跑全家族矩阵。
+cw32l012-pac = { git = "https://github.com/SunWithCloude/Cw32l012_pac", branch = "main", default-features = false, optional = true }
+cw32f030-pac = { version = "=0.1.1", optional = true }
+cw32f020-pac = { version = "=0.1.0", optional = true }
+cw32f003-pac = { version = "=0.1.0", optional = true }
+cw32l010_pac = { version = "=0.1.0", optional = true }
+cw32l011-pac = { version = "=0.1.0", optional = true }
+cw32l031-pac = { version = "=0.1.0", optional = true }
+cw32l052-pac = { version = "=0.1.0", optional = true }
+cw32r031-pac = { version = "=0.1.0", optional = true }
+cw32w031-pac = { version = "=0.1.0", optional = true }
+cw32l083-pac = { version = "=0.1.0", optional = true }
 critical-section = { version = "1.2", features = ["restore-state-u8"] }
 # 日志格式层（feature `defmt` 开启时驱动错误/配置类型 derive defmt::Format）
 defmt = { version = "1", optional = true, default-features = false }
@@ -58,7 +60,7 @@ defmt = ["dep:defmt"]
 # APBEN2 的 UART1/SPI1 布局,寄存器面与 CW32F030 同源,F030 与 CW32A030
 # 兼容)
 cw32l012 = ["dep:cw32l012-pac"]
-cw32l010 = ["dep:cw32l010-pac"]
+cw32l010 = ["dep:cw32l010_pac"]
 cw32l011 = ["dep:cw32l011-pac"]
 cw32f030 = ["dep:cw32f030-pac"]
 cw32f020 = ["dep:cw32f020-pac"]
@@ -71,7 +73,7 @@ cw32l083 = ["dep:cw32l083-pac"]
 # 透传所选家族 PAC 的 rt feature(cortex-m-rt 向量表)
 rt = [
     "cw32l012-pac?/rt",
-    "cw32l010-pac?/rt",
+    "cw32l010_pac?/rt",
     "cw32l011-pac?/rt",
     "cw32f030-pac?/rt",
     "cw32l031-pac?/rt",
