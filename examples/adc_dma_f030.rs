@@ -22,7 +22,7 @@
 //! 上板请核对 BUF 数值合理性与 ROUNDS 心跳（无 DMA 请求则全部 Timeout）。
 //!
 //! cargo build --target thumbv6m-none-eabi --release --no-default-features \
-//!     --features "rt,critical-section-impl,cw32f030" --example adc_dma_f030
+//!     --features "rt,cw32f030" --example adc_dma_f030
 
 #![no_std]
 #![no_main]

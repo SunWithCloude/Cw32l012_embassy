@@ -6,7 +6,7 @@
 //! 回环:发送字节序列,读回应与发送一致,LED 常亮=通过/闪烁=失败。
 //!
 //! cargo build --target thumbv6m-none-eabi --release --no-default-features \
-//!     --features "rt,cw32f030,critical-section-impl" --example spi_loopback_f030
+//!     --features "rt,cw32f030" --example spi_loopback_f030
 
 #![no_std]
 #![no_main]

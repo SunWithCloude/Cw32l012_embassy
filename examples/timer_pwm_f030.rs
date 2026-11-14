@@ -22,7 +22,7 @@
 //! 结果落 SRAM 静态量，经 `probe-rs read` 观测（debug 构建会把地址
 //! 未逃逸的内部 static 优化掉，`#[used]#[no_mangle]` 锁符号）。
 //!
-//! cargo build --target thumbv6m-none-eabi --release --no-default-features --features "critical-section-impl,rt,cw32f030" --example timer_pwm_f030
+//! cargo build --target thumbv6m-none-eabi --release --no-default-features --features "rt,cw32f030" --example timer_pwm_f030
 
 #![no_std]
 #![no_main]

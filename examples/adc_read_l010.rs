@@ -16,7 +16,7 @@
 //!   请核对 RAW/SEQ 数值合理性（GND≈0、VDD≈4095）。
 //!
 //! cargo build --target thumbv6m-none-eabi --release --no-default-features \
-//!     --features "rt,critical-section-impl,cw32l010" --example adc_read_l010
+//!     --features "rt,cw32l010" --example adc_read_l010
 
 #![no_std]
 #![no_main]

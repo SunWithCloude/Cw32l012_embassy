@@ -26,7 +26,7 @@
 //! - `LAST_RX`: 最近一轮 transfer_dma 收到的数据
 //!
 //! cargo build --target thumbv6m-none-eabi --release --no-default-features \
-//!     --features "rt,critical-section-impl,cw32f030" --example spi_dma_f030
+//!     --features "rt,cw32f030" --example spi_dma_f030
 
 #![no_std]
 #![no_main]

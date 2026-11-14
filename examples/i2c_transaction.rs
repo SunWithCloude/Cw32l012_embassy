@@ -28,7 +28,7 @@
 //! - 其它错误:常亮
 //!
 //! cargo build --target thumbv6m-none-eabi --release --no-default-features \
-//!     --features "rt,cw32l012,critical-section-impl" --example i2c_transaction
+//!     --features "rt,cw32l012" --example i2c_transaction
 
 #![no_std]
 #![no_main]

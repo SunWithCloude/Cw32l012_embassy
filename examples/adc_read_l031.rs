@@ -15,7 +15,7 @@
 //!   VDDA≈4095）。
 //!
 //! cargo build --target thumbv6m-none-eabi --release --no-default-features \
-//!     --features "rt,critical-section-impl,cw32l031" --example adc_read_l031
+//!     --features "rt,cw32l031" --example adc_read_l031
 
 #![no_std]
 #![no_main]

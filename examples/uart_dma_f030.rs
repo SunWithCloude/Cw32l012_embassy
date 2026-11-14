@@ -22,7 +22,7 @@
 //! - `LAST_FRAME`: 最近一帧内容（收到的原样字节）
 //!
 //! cargo build --target thumbv6m-none-eabi --release --no-default-features \
-//!     --features "rt,critical-section-impl,cw32f030" --example uart_dma_f030
+//!     --features "rt,cw32f030" --example uart_dma_f030
 
 #![no_std]
 #![no_main]

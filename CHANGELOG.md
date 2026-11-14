@@ -4,6 +4,20 @@
 
 ## [未发布]（0.4.0 增量，随 DMA/RTC 收尾定档）
 
+### 破坏性变更（0.4.0）
+
+- **依赖全部走 crates.io**（为发布本 crate 铺路）：10 个生成家族 PAC 改为
+  版本依赖并精确钉版（`=0.1.2`），cw32l012-pac 改名 **cw32l012-pac-um**
+  （`=0.3.0`）——crates.io 上 `cw32l012_pac` 已被第三方缺陷版占用。f030 与
+  l010 同因改名 `cw32f030-pac-um`（占用者 cw32-rust）与 `cw32l010-pac-um`
+  （占用者 Lioyae）。`cw32-pacs` 仓 0.1.2 起以新名发布；sibling path 依赖
+  不再需要，本地开发用 `[patch.crates-io]` 指回检出目录。
+- **critical-section 实现改由 cortex-m 提供**（`critical-section-single-core`
+  feature，随依赖自动带上）：删除本 crate 的 `critical-section-impl`
+  feature（PRIMASK 手写版）。与已发布 PAC/生态标准一致；restore-state
+  统一 u32。一个固件仍只能有一个实现——与 cw32l012-hal 的实现互斥的
+  警告不变。
+
 ### 新增
 
 - **FLASH 自编程**（`flash` 模块，L012 先行——经典家族 FLASH 是另一套

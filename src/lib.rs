@@ -198,13 +198,13 @@ pub use cw32f003_pac as pac;
 #[cfg(feature = "cw32f020")]
 pub use cw32f020_pac as pac;
 #[cfg(feature = "cw32f030")]
-pub use cw32f030_pac as pac;
+pub use cw32f030_pac_um as pac;
 #[cfg(feature = "cw32l010")]
-pub use cw32l010_pac as pac;
+pub use cw32l010_pac_um as pac;
 #[cfg(feature = "cw32l011")]
 pub use cw32l011_pac as pac;
 #[cfg(feature = "cw32l012")]
-pub use cw32l012_pac as pac;
+pub use cw32l012_pac_um as pac;
 #[cfg(feature = "cw32l031")]
 pub use cw32l031_pac as pac;
 #[cfg(feature = "cw32l052")]

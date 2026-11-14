@@ -5,7 +5,7 @@
 //! 才能实测回环;烧录后 CPU 侧可经寄存器读数验证初始化。
 //!
 //! cargo build --target thumbv6m-none-eabi --release --no-default-features \
-//!     --features "rt,cw32f030,critical-section-impl" --example uart_echo_f030
+//!     --features "rt,cw32f030" --example uart_echo_f030
 
 #![no_std]
 #![no_main]
