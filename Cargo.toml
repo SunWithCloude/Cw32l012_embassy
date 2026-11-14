@@ -220,6 +220,10 @@ name = "wdt_demo_f030"
 required-features = ["rt", "cw32f030"]
 
 [[example]]
+name = "atim_motor_f030"
+required-features = ["rt", "cw32f030"]
+
+[[example]]
 name = "flash_store"
 required-features = ["rt", "cw32l012"]
 
