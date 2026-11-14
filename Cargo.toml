@@ -238,3 +238,7 @@ required-features = ["rt", "cw32l012"]
 [[example]]
 name = "uart_echo_l083"
 required-features = ["rt", "cw32l083"]
+
+[[example]]
+name = "uart_dma_l083"
+required-features = ["rt", "cw32l083"]
