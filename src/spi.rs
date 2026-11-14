@@ -18,8 +18,8 @@
 //! | SPI1 | PA10/PA11/PA12（AF5）、PB03/PB04/PB05（AF5）、PB13/PB14/PB15（AF5）、PC01/PC02/PC03（AF3）、PD13/PD14/PD15（AF4）、PE04/PE05/PE06（AF4）、PE09/PE10/PE11（AF4） |
 //! | SPI2 | PA02/PA00/PA01（AF5）、PB08/PB07/PB06（AF5）、PB10/PC14/PC15（AF5）、PB13/PB14/PB15（AF4）、PD01/PD03/PD04（AF5）、PD09/PD10/PD11（AF4）、PE13/PE14/PE15（AF4） |
 //!
-//! l083 的 DMA 触发源映射（SPI2 部分）本轮未接线——`transfer_dma`/
-//! `write_dma` 仅 SPI1 可用，SPI2 调用会显式 panic（见 [`Spi::transfer_dma`]）。
+//! l083 的 DMA 触发源映射 SPI1/SPI2 **全接线**——SPI2 实例仅 f030/l083
+//! 有，触发源 SPI2_RX/SPI2_TX=0x08/0x09 两家手册请求表同值（§8.8.4）。
 //!
 //! # DMA 收发（L012 与经典组；语义级实现待实板验证）
 //!
@@ -737,24 +737,28 @@ impl Spi {
 
     /// 发送方向硬件触发源（§8.8.4 / 厂商库 DMA_HardTrig_SPIx_TXBufferE）。
     ///
-    /// SPI2 触发源接线仅 f030；l083 的 SPI2 触发源映射**待后续接线**
-    /// （本轮 DMA 仅 SPI1 可用，SPI2 显式 panic 防静默错触发）。
+    /// SPI1/SPI2 **全接线**——SPI2 实例仅 f030/l083 有（`instance_of` 同款
+    /// cfg），SPI2_TX=0x09 两家手册请求表同值（f030=EN_V1.0 p147-148、
+    /// l083=CN_V2.0 p148）。`_` 分支是结构性兜底——单实例家族（f020/f003/
+    /// l031/l052/r031/w031）`instance_of` 只产 0。
     fn tx_hs(&self) -> u8 {
         match self.idx {
             0 => crate::dma::hs::SPI1_TX,
-            #[cfg(feature = "cw32f030")]
+            #[cfg(any(feature = "cw32f030", feature = "cw32l083"))]
             1 => crate::dma::hs::SPI2_TX,
-            _ => panic!("该实例的 DMA 触发源未接线（l083 SPI2 待后续,本轮仅 SPI1）"),
+            _ => unreachable!("SPI 实例号超出本家族实例数（instance_of 只产 0..N-1）"),
         }
     }
 
     /// 接收方向硬件触发源（§8.8.4 / 厂商库 DMA_HardTrig_SPIx_RXBufferNE）
+    ///
+    /// 接线范围同 [`Spi::tx_hs`]：SPI1_RX=0x06 全经典组、SPI2_RX=0x08。
     fn rx_hs(&self) -> u8 {
         match self.idx {
             0 => crate::dma::hs::SPI1_RX,
-            #[cfg(feature = "cw32f030")]
+            #[cfg(any(feature = "cw32f030", feature = "cw32l083"))]
             1 => crate::dma::hs::SPI2_RX,
-            _ => panic!("该实例的 DMA 触发源未接线（l083 SPI2 待后续,本轮仅 SPI1）"),
+            _ => unreachable!("SPI 实例号超出本家族实例数（instance_of 只产 0..N-1）"),
         }
     }
 

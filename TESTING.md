@@ -69,7 +69,11 @@ ATIM 互补+死区+刹车(BDTR=0x94FF)、ADC 序列、RTC、IWDT/WWDT、FLASH �
 ### 其它家族
 
 - l083(`cw32l083\):UART×6/SPI×2/I2C×2 多实例布线已落地(`uart_echo_l083`
-  示例,共享向量 UART2_UART5 等 ELF 向量槽实测通过)。⏳ 仅编译。
+  示例,共享向量 UART2_UART5 等 ELF 向量槽实测通过);DMA 触发源映射
+  UART×6/SPI×2 全接线(`uart_dma_l083` = UART2 DMA 回显,触发源
+  UART2_RX/TX=0x02/03,UART4..6=0x2B..0x30 仅 l083 手册表有;I2C 不在
+  手册 §8.8.4 DMA 请求表——CN_V2.0 印刷页 147-149 无 I2C 行,不接 DMA)。
+  ⏳ 仅编译。
 - l031/l010/l011/f003/l052/r031/w031:`cargo check` 矩阵全绿;
   l010/l011 的 PWM(GTIM/ATIM 均缺)待接。
 

@@ -81,10 +81,18 @@
     （经典分支无 IER，只能动 NVIC 线）。
   - 引脚路线写进各模块文档表（数据手册表 5-3..5-8 摘要；全表见
     cw32-hal2 数据仓库 `af/cw32l083-serial.yaml`）。
-  - **DMA 路线待后续**：l083 UART2..6/SPI2 的 DMA 触发源映射本轮未接
-    （不加接 DMA 的构造 overload）——`write_dma`/`read_dma`/
-    `transfer_dma` 对未接实例显式 panic 防静默错触发（原实现会拿 UART1/
-    SPI1 的触发源错误搬运），文档注明"待后续接线"。
+  - **DMA 触发源映射全接线**：l083 UART×6/SPI×2 的 DMA 触发源映射已接——
+    `cudma::tx_hs/rx_hs` 扩到 idx 0..5：UART1..3=0x00..0x05（全经典组
+    请求表同值）、UART4..6=UARTx_TX/RX=0x2B..0x30（**仅 l083 手册表有**，
+    l083=CN_V2.0 p147-149），UART2/3 臂从 cfg(f030) 放宽为
+    cfg(any(f030,l083))（instance_of 同款 cfg）；spi.rs 的 SPI2 同步接线
+    （SPI2_RX/TX=0x08/0x09，f030 与 l083 请求表同值）。A23 的"未接实例
+    显式 panic"防呆换成按实例查表（兜底 unreachable——单实例家族
+    `instance_of` 只产 0，不会越界）。**I2C 查证结论**：l083 手册 §8.8.4
+    `DMA_TRIGy.HARDSRC[7:2]` 请求表（CN_V2.0 印刷页 147-149/PDF 页
+    148-150）0x00..0x32 全部 51 行**无任何 I2C 行**——I2C1/I2C2 无硬件
+    DMA 触发源，无从接线，i2c.rs 保持中断驱动并文档注明出处。示例
+    `uart_dma_l083`（UART2 DMA 回显，证明多实例触发映射可用）。
   - 顺带修复：①f030 的 `new_uart2`/`new_uart3` 门控此前 assert
     `idx==0`，构造即 panic——改为查表 UART2=APBEN1.7/UART3=APBEN1.8
     （F030 PAC 位域）；②lib.rs 家族互斥宏名单补上漏掉的 `cw32l083`
