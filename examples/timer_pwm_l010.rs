@@ -28,7 +28,7 @@
 //! ⚠ compiles-not-run：l010 分支无阻塞版同源背书，寄存器位面按三家族
 //! PAC 逐位比对 + hal2 证据链核对，首次上板先看 PERIOD/UPDATES 合理性。
 //!
-//! cargo build --target thumbv6m-none-eabi --release --no-default-features --features "rt,cw32l010" --example timer_pwm_l010
+//! cargo build --target thumbv6m-none-eabi --release --no-default-features --features "rt,cw32l010,critical-section-impl" --example timer_pwm_l010
 
 #![no_std]
 #![no_main]
@@ -37,6 +37,7 @@ use embassy_executor::main;
 
 use embassy_cw32::{
     Config, Peripherals,
+    gpio::Pin,
     timer::{GtimPwm, PwmChannel, PwmConfig},
 };
 

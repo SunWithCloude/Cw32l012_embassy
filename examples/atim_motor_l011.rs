@@ -58,7 +58,7 @@
 //! 语义见 src/atim.rs 模块文档（实机验证待板，上板前勿接真电机——功率级
 //! 先用逻辑分析仪 + 小电压验证）。
 //!
-//! cargo build --target thumbv6m-none-eabi --release --no-default-features --features "rt,cw32l011" --example atim_motor_l011
+//! cargo build --target thumbv6m-none-eabi --release --no-default-features --features "rt,cw32l011,critical-section-impl" --example atim_motor_l011
 
 #![no_std]
 #![no_main]
