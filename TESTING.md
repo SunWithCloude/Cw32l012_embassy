@@ -74,6 +74,14 @@ ATIM 互补+死区+刹车(BDTR=0x94FF)、ADC 序列、RTC、IWDT/WWDT、FLASH �
   UART2_RX/TX=0x02/03,UART4..6=0x2B..0x30 仅 l083 手册表有;I2C 不在
   手册 §8.8.4 DMA 请求表——CN_V2.0 印刷页 147-149 无 I2C 行,不接 DMA)。
   ⏳ 仅编译。
+- **l083 ATIM 互补 PWM 已接**(`atim_classic`,与 f030 一套驱动):死区四段/
+  ICR 写 0 清/MODE=10 逐条对照《CW32L083 UM V2.0》§16.3.3.5(印刷页
+  317-318)/§16.7.5(p340)/§16.7.9(p345)核实,引脚 SDK 宏 + DS V1.9
+  表 5-3..5-7 双源(PE9 单源孤证拒收)。首板核对项
+  `atim_motor_l083`(PA8-10/PB13-15 三相全 AF7 + PC13 心跳):
+  `PERIOD`=ARR=399/档位 0(20kHz@8MHz)、`DT_TICKS`=4/`DT_CODE`=2
+  (500ns 死区)、`UPDATES`≈20000/s、三对互补方波对边沿死区 ≈500ns。
+  **上板前勿接真电机**。⏳ 仅编译。
 - **l010/l011 PWM 已接**(`cw32l010`/`cw32l011`):GTIM 简单 PWM
   (`timer_pwm_l010`)与 ATIM 互补 PWM(`atim_motor_l011`)落地,与 L012
   一套驱动(位面经三家族 PAC 逐位比对 + hal2 证据链核对)。⏳ **仅编译,
