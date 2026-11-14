@@ -58,8 +58,8 @@
 //!   `cw32f030` / `cw32f020` / `cw32f003` / `cw32l031` / `cw32l052` /
 //!   `cw32l083` / `cw32r031` / `cw32w031`
 //! - `rt`：透传所选家族 PAC 的 `cortex-m-rt` 向量表
-//! - `critical-section-impl`：PRIMASK 关中断的 critical-section 实现
-//!   （单核 M0+，一个固件只能有一个实现）
+//! - critical-section：实现由 cortex-m 的 `critical-section-single-core`
+//!   提供（随本 crate 自动带上；一个固件只能有一个实现）
 //! - `defmt`：驱动错误/配置类型 derive `defmt::Format`（配合 defmt-rtt，
 //!   见 `rtt_hello` 示例）
 
@@ -370,68 +370,12 @@ pub fn set_frequencies(hclk_hz: u32, pclk_hz: u32) {
 }
 
 // ================= critical-section 实现 =================
-
-/// PRIMASK 临界区（feature `critical-section-impl`，默认开启）。
-///
-/// 单核 M0+ 语义：关可屏蔽中断；嵌套进入只记录"已关"标记，最外层退出
-/// 时恢复。**一个固件只能有一个 critical-section 实现**——不要与
-/// cw32l012-hal 的 `critical-section-impl` 或 cortex-m 的实现同时启用。
-#[cfg(all(
-    feature = "critical-section-impl",
-    target_arch = "arm",
-    target_os = "none"
-))]
-mod cs_impl {
-    struct Cs;
-
-    critical_section::set_impl!(Cs);
-
-    unsafe impl critical_section::Impl for Cs {
-        unsafe fn acquire() -> critical_section::RawRestoreState {
-            let primask: u32;
-            unsafe {
-                core::arch::asm!("mrs {0}, PRIMASK", "cpsid i", out(reg) primask);
-            }
-            (primask & 1) as u8
-        }
-
-        unsafe fn release(token: critical_section::RawRestoreState) {
-            if token == 0 {
-                unsafe { core::arch::asm!("cpsie i") };
-            }
-        }
-    }
-}
-
-/// 宿主机（cargo test）下的退化 critical-section 实现：全局位自旋。
-/// 单线程测试环境足够；不用于任何真实目标。
-#[cfg(all(
-    feature = "critical-section-impl",
-    not(all(target_arch = "arm", target_os = "none"))
-))]
-mod cs_impl_host {
-    use core::sync::atomic::{AtomicBool, Ordering};
-
-    struct Cs;
-
-    critical_section::set_impl!(Cs);
-
-    unsafe impl critical_section::Impl for Cs {
-        unsafe fn acquire() -> critical_section::RawRestoreState {
-            while LOCK
-                .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-                .is_err()
-            {}
-            0
-        }
-
-        unsafe fn release(_token: critical_section::RawRestoreState) {
-            LOCK.store(false, Ordering::Release);
-        }
-    }
-
-    static LOCK: AtomicBool = AtomicBool::new(false);
-}
+//
+// critical-section 的实现由 cortex-m 的 `critical-section-single-core`
+// 提供（无条件依赖，见 Cargo.toml）——与已发布家族 PAC 的取法一致，
+// 全生态一个标准。本 crate 不再自带 PRIMASK 实现：一个固件只能有一个
+// critical-section 实现，改用 cw32l012-hal 的实现属于高级操作（需自行
+// 处理本依赖链里的 cortex-m 实现），不推荐。
 
 // ================= 便捷时钟门控 =================
 // 两代的 AHBEN GPIO 位:A/B/C 相同(4/5/6),F 不同(L012=7,F030=9);

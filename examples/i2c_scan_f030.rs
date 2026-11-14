@@ -17,7 +17,7 @@
 //! 板上未接任何从器件时全地址 NACK,LED 慢闪即为正确行为。
 //!
 //! cargo build --target thumbv6m-none-eabi --release --no-default-features \
-//!     --features "rt,cw32f030,critical-section-impl" --example i2c_scan_f030
+//!     --features "rt,cw32f030" --example i2c_scan_f030
 
 #![no_std]
 #![no_main]

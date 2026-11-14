@@ -40,9 +40,9 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "cc"
-version = "1.10.0"
+version = "1.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86e055fa6e3e40ad6187ba25b6855eeb635d5271f8e0f0e1e9a5826b8d75bea0"
+checksum = "33ef9e3e8154a45c7a95cff4c1299702106ad94062d7bb85fdc5d3a5afd91d45"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -107,7 +107,7 @@ checksum = "05cf9e0f899304705b85fda7b178fc383f2529ec2479693248b600e530d2327a"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -119,6 +119,8 @@ checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 [[package]]
 name = "cw32f003-pac"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "663f91212efd72b1612a8a3c32bcb663b0abac5e5e5e51a80066974993803e62"
 dependencies = [
  "cortex-m-rt",
 ]
@@ -126,27 +128,40 @@ dependencies = [
 [[package]]
 name = "cw32f020-pac"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4112608d43f04c3c7931c8cf1b2732763a04b2165ed94743cbbb5c6ea98d79b"
 dependencies = [
  "cortex-m-rt",
 ]
 
 [[package]]
 name = "cw32f030-pac"
-version = "0.1.0"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b769a5a7a2e06d672f31b1bd9ce0ea8927917e16400f1a4f977f0a788ab66219"
 dependencies = [
+ "cortex-m",
  "cortex-m-rt",
+ "vcell",
 ]
 
 [[package]]
-name = "cw32l010-pac"
+name = "cw32l010_pac"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bfbee12912599071e121eb63f1a2627c7250f082c0297a0d3f0a92215265a51"
 dependencies = [
+ "cortex-m",
  "cortex-m-rt",
+ "critical-section",
+ "vcell",
 ]
 
 [[package]]
 name = "cw32l011-pac"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "437e0c546949a458f340effdc1712b8ef02311087ab0307d99f47a3ffcb052d9"
 dependencies = [
  "cortex-m-rt",
 ]
@@ -154,6 +169,7 @@ dependencies = [
 [[package]]
 name = "cw32l012-pac"
 version = "0.2.1"
+source = "git+https://github.com/SunWithCloude/Cw32l012_pac?branch=main#4df76681348b68a980d0176e9d720f3dd1af07bf"
 dependencies = [
  "cortex-m-rt",
 ]
@@ -161,6 +177,8 @@ dependencies = [
 [[package]]
 name = "cw32l031-pac"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22621cb0ac6306cf931808081edbe7711d85728f73723ccf1cd5d50bdbb99a83"
 dependencies = [
  "cortex-m-rt",
 ]
@@ -168,6 +186,8 @@ dependencies = [
 [[package]]
 name = "cw32l052-pac"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d71daac113f6009de65c4a01765e98655cada582ccdce684d5b35dd3e2f652b"
 dependencies = [
  "cortex-m-rt",
 ]
@@ -175,6 +195,8 @@ dependencies = [
 [[package]]
 name = "cw32l083-pac"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b4a194b15adee33529b438a81fc790fb04e4444ddff1b471d08f11af605e88a"
 dependencies = [
  "cortex-m-rt",
 ]
@@ -182,6 +204,8 @@ dependencies = [
 [[package]]
 name = "cw32r031-pac"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d9a2dc496364692547d281deb53780614391ac424130ee6055b5e4994ef8a57"
 dependencies = [
  "cortex-m-rt",
 ]
@@ -189,6 +213,8 @@ dependencies = [
 [[package]]
 name = "cw32w031-pac"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e0b92cc1600a95f910465824a30ab72079dee7061f3a2110fac7745a5e4e9bc"
 dependencies = [
  "cortex-m-rt",
 ]
@@ -256,7 +282,7 @@ dependencies = [
  "defmt-parser",
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -291,12 +317,13 @@ dependencies = [
 name = "embassy-cw32"
 version = "0.3.0"
 dependencies = [
+ "cortex-m",
  "cortex-m-rt",
  "critical-section",
  "cw32f003-pac",
  "cw32f020-pac",
  "cw32f030-pac",
- "cw32l010-pac",
+ "cw32l010_pac",
  "cw32l011-pac",
  "cw32l012-pac",
  "cw32l031-pac",
@@ -495,9 +522,9 @@ dependencies = [
 
 [[package]]
 name = "heapless"
-version = "0.9.3"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25ba4bd83f9415b58b4ed8dc5714c76e626a105be4646c02630ad730ad3b5aa4"
+checksum = "b1edcd5a338e64688fbdcb7531a846cfd3476a54784dcb918a0844682bc7ada5"
 dependencies = [
  "hash32",
  "stable_deref_trait",
@@ -529,15 +556,15 @@ checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 
 [[package]]
 name = "log"
-version = "0.4.34"
+version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "loom"
-version = "0.7.2"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "419e0dc8046cb947daa77eb95ae174acfbddb7673b4151f56d1eed8e93fbfaca"
+checksum = "f1611ddbf89dc6ae42cfbd51fc207836140130257646eab8d6d2fb16577db2d2"
 dependencies = [
  "cfg-if",
  "generator",
@@ -695,9 +722,9 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "smallvec"
-version = "1.16.4"
+version = "1.16.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
+checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
 
 [[package]]
 name = "stable_deref_trait"
@@ -724,9 +751,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.9"
+version = "3.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b"
+checksum = "4ae9ccbea3a7b0b09443036490c8f34a8b1b760fd345e5c0dae0aac718faea79"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -750,7 +777,7 @@ checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]

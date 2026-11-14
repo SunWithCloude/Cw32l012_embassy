@@ -31,7 +31,13 @@ cw32l052-pac = { version = "=0.1.0", optional = true }
 cw32r031-pac = { version = "=0.1.0", optional = true }
 cw32w031-pac = { version = "=0.1.0", optional = true }
 cw32l083-pac = { version = "=0.1.0", optional = true }
-critical-section = { version = "1.2", features = ["restore-state-u8"] }
+# critical-section 实现由 cortex-m 的 critical-section-single-core 提供
+# （与已发布 PAC 的取法一致；restore-state=u32 由它带出）。本 crate 自身
+# 不再提供实现——一个固件只能有一个实现，改用 cw32l012-hal 的实现时
+# 需自行去掉本依赖链里的 cortex-m 实现（高级操作，不推荐）。
+critical-section = "1.2"
+# 保证 critical-section 实现始终在链上（L012 的 git PAC 不带 cortex-m）
+cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
 # 日志格式层（feature `defmt` 开启时驱动错误/配置类型 derive defmt::Format）
 defmt = { version = "1", optional = true, default-features = false }
 embassy-sync = "0.8"
@@ -46,11 +52,7 @@ embedded-hal-async = "1"
 embedded-io-async = "0.7"
 
 [features]
-default = ["critical-section-impl", "cw32l012"]
-# PRIMASK 关中断实现 critical-section（单核 M0+）。
-# 一个固件只能有一个实现：不要与 cw32l012-hal 的 critical-section-impl
-# 或 cortex-m 的实现同时启用（链接冲突）。
-critical-section-impl = []
+default = ["cw32l012"]
 # defmt 支持：错误/配置类型 derive `defmt::Format`（配合 defmt-rtt，
 # 见 examples/rtt_hello）
 defmt = ["dep:defmt"]
