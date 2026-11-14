@@ -122,9 +122,13 @@ pub mod atim_classic;
     feature = "cw32l011"
 ))]
 pub mod adc;
-// ATIM 高级定时器互补 PWM：L012 家族独占（手册 §16，三相电机 PWM 路线）。
-// 经典家族的 ATIM 是另一套 IP（CR0/CMMR 面，见 src/timer.rs classic 分支头注）
-#[cfg(feature = "cw32l012")]
+// ATIM 高级定时器互补 PWM：L012 代组三家族（cw32l012/cw32l010/cw32l011，
+// L012 手册 §16，三相电机 PWM 路线）——同一套 STM32 风格 IP：基址同
+// 0x4000_1400、位面逐位一致（hal2 证据链 register_variant 三家族同为
+// cw32l010_v1），字段命名差异（dier/ier、ccmr1/ccmr1cap）与 l010 无外部
+// 刹车脚的差异收敛见 src/atim.rs 差异表。经典家族的 ATIM 是另一套 IP
+// （CR0/CMMR 面，见 src/timer.rs classic 分支头注）
+#[cfg(any(feature = "cw32l012", feature = "cw32l010", feature = "cw32l011"))]
 pub mod atim;
 #[cfg(feature = "cw32l012")]
 pub mod dac;
@@ -172,10 +176,12 @@ pub mod rcc;
 pub mod rtc;
 pub mod spi;
 pub mod time_driver;
-// timer：L012 GTIM（STM32 风格面）与经典代 GTIM（CR0/CMMR/IER 面）为
-// 两代 IP，分支见 src/timer.rs。l010/l011 的 GTIM 是另一代缓冲变体，待接。
+// timer：L012 代组 GTIM（STM32 风格面，gen 分支 = L012/l010/l011 三家族
+// 一套）与经典代 GTIM（CR0/CMMR/IER 面）为两代 IP，分支见 src/timer.rs
 #[cfg(any(
     feature = "cw32l012",
+    feature = "cw32l010",
+    feature = "cw32l011",
     feature = "cw32f030",
     feature = "cw32f020",
     feature = "cw32l031",

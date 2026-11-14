@@ -1,8 +1,11 @@
 //! 异步定时器 PWM：两代定时器 IP，按家族 feature 二选一编译。
 //!
-//! - **L012 家族**（`cw32l012`，手册 §16）：GTIM1-4 单通道 PWM 输出 +
-//!   更新事件等待，见 [`l012`] 分支（`GtimPwm`）。STM32 风格寄存器面
-//!   （PSC/ARR/CCR/CCMR/CCER/DIER/EGR，影子寄存器预装载）。
+//! - **L012 代组**（`cw32l012`/`cw32l010`/`cw32l011`，手册 §16）：GTIM
+//!   单通道 PWM 输出 + 更新事件等待，见 [`l012gen`] 分支（`GtimPwm`）。
+//!   STM32 风格寄存器面（PSC/ARR/CCR/CCMR/CCER/IER/EGR，影子寄存器
+//!   预装载）。实例数随家族：L012 = GTIM1..4、l011 = GTIM1/GTIM2、
+//!   l010 = GTIM1 单实例。三家族一套代码，字段命名差异（dier/ier、
+//!   ccmr1/ccmr1cap）经薄适配收敛，见 [`l012gen`] 分支头注差异表。
 //! - **经典家族**（`cw32f030`/`cw32f020`/`cw32l031`/`cw32l052`/`cw32l083`/
 //!   `cw32r031`/`cw32w031`）：经典代 GTIM 的单通道 PWM + 溢出节拍等待，
 //!   见 [`classic`] 分支（`ClassicPwm`）。与 L012 **无一处同构**：
@@ -130,31 +133,76 @@ pub fn calc_pwm_pow2_div(pclk_hz: u32, freq_hz: u32) -> Option<(u32, u16)> {
     None
 }
 
-// ================= L012 家族分支 =================
-#[cfg(feature = "cw32l012")]
-mod l012 {
-    //! L012 家族（`cw32l012`，手册 §16）：GTIM1-4 的 `GtimPwm`。
+// ================= L012 代组分支 =================
+#[cfg(any(feature = "cw32l012", feature = "cw32l010", feature = "cw32l011"))]
+mod l012gen {
+    //! L012 代组（`cw32l012`/`cw32l010`/`cw32l011`，L012 手册 §16）：GTIM
+    //! 的 `GtimPwm`——STM32 风格寄存器面（PSC/ARR/CCR/CCMR/CCER/IER/EGR，
+    //! 影子寄存器预装载）。实例数随家族：L012 = GTIM1..4（GTIM3/4 共享
+    //! IRQ18）；l011 = GTIM1/GTIM2（IRQ16/17 独立）；l010 = GTIM1 单实例。
+    //!
+    //! # 三家族差异表（一套代码，cfg + 薄适配收敛）
+    //!
+    //! | 差异点 | L012 | l010/l011 |
+    //! |--------|------|-----------|
+    //! | 中断使能寄存器 | PAC 字段名 `dier` | 生成名 `ier`（同址 0x0C） |
+    //! | 输出比较 CCMR | PAC 字段名 `ccmr1`/`ccmr2` | 生成名 `ccmr1cap`/`ccmr2cap`（同址 0x18/0x1C，比较位面在 PAC `gtim::ccmr1cmp`/`ccmr2cmp`） |
+    //! | ISR/ICR/EGR | isr RO、icr R1W0、egr WO | 同位序同语义（l010 的 isr PAC 类型标 RW、egr/icr 标 RW，读/写用法一致） |
+    //! | 实例与门控 | GTIM1/2/3/4 = APBEN1 bit6/7/11/12 | GTIM1/2 = bit6/7（l011），l010 仅 GTIM1 |
+    //! | NVIC 线 | GTIM1=16、GTIM2=17、GTIM3/4 共享 18 | l010/l011 GTIM1=16、l011 GTIM2=17，独立不共享 |
+    //!
+    //! 位面三家族逐位一致：cw32l012-pac-um 0.3.0 `gtim` 模块整字常量 ↔
+    //! cw32l011-pac 0.1.2 / cw32l010-pac-um 0.1.2 的小写字段模块
+    //! （`gtim::{cr1,egr,isr,icr,ccer,ccmr1cmp,ccmr2cmp}`）逐位比对一致
+    //! （同一套 IP；门控位序另有 l011 SDK 头 `cw32l011.h` 的
+    //! `SYSCTRL_APBEN1_GTIM1/2_Pos`=6/7 双源背书）。位常量按 L012 PAC
+    //! 同名风格本地定义（见下），l010/l011 对应字段模块在注释注明。
     //!
     //! 寄存器配方与阻塞版 HAL **同源**（`cw32l012-hal/src/gtim.rs` 的
     //! `start_pwm`/`set_duty`，实机点灯验证见其 `examples/gtim_pwm.rs`）：
-    //! 边沿对齐 PWM 模式 1（CNT<CCR 输出有效电平，高有效）、PSC/ARR 十六位、
-    //! 影子寄存器预装载。第一版不做 ATIM 互补/死区。
+    //! 边沿对齐 PWM 模式 1（CNT<CCR 输出有效电平，高有效）、PSC/ARR 十六位
+    //! 线性分频、影子寄存器预装载。⚠ l010/l011 分支**无阻塞版同源背书**
+    //! （阻塞版未接这两家族），寄存器位面按三家族 PAC 逐字段比对 +
+    //! hal2 证据链（`docs/buffered-pwm-route-evidence.json` 的引脚路线/
+    //! 手册页码）核对，compiles-not-run。第一版不做 ATIM 互补/死区（见
+    //! [`crate::atim`]）。
     //!
     //! # 中断模型（IER 单发纪律）
     //!
     //! [`GtimPwm::wait_update`] 用更新中断 UIF 做异步周期节拍（等待时才开
-    //! DIER.UIE，IRQ 唤醒即压掉，防风暴）。GTIMx_ICR 已建模进 PAC
-    //! （`Gtim::icr` @ 0x70，R1W0）；DIER.UIE 位常量 PAC 仍未定义，按手册
-    //! §16.10.4 补。
+    //! IER.UIE，IRQ 唤醒即压掉，防风暴）。GTIMx_ICR 三家族均建模进 PAC
+    //! （@ 0x70，R1W0）；UIE 位常量按手册 §16.10.4 本地补。
     //!
-    //! # 引脚（手册表 9-2，须配为对应 AF 复用输出）
+    //! # 引脚（须配为对应 AF 复用输出；SDK 宏 + 数据手册表 5-3/5-4 双源）
     //!
-    //! | 通道 | 常用引脚（阻塞版例程实机验证）      |
-    //! |------|-------------------------------------|
-    //! | GTIM1_CH1 | PB04（AF6）、PA00（AF10）等    |
-    //! | GTIM1_CH3 | PA03（AF6）等                  |
+    //! L012（手册表 9-2，阻塞版例程实机验证）：
     //!
-    //! 完整映射见手册表 9-2；引脚/AF 必须与所选通道对应。
+    //! | 通道 | 常用引脚                          |
+    //! |------|-----------------------------------|
+    //! | GTIM1_CH1 | PB04（AF6）、PA00（AF10）等  |
+    //! | GTIM1_CH3 | PA03（AF6）等                |
+    //!
+    //! l010（GTIM1 单实例，AF6；`PA1` 的 CH3 路线被振荡器占用排除）：
+    //!
+    //! | 通道 | 引脚（AF6）      |
+    //! |------|------------------|
+    //! | GTIM1_CH1 | PA6 / PB6   |
+    //! | GTIM1_CH2 | PA5 / PB5   |
+    //! | GTIM1_CH3 | PA4 / PB4   |
+    //! | GTIM1_CH4 | PA3 / PB3   |
+    //!
+    //! l011（GTIM1 AF6 / GTIM2 AF5 或 AF6；`PB7` 的 CH4 路线被振荡器占用
+    //! 排除——hal2 证据链 safety_excluded）：
+    //!
+    //! | 通道 | GTIM1（AF6）       | GTIM2                |
+    //! |------|--------------------|----------------------|
+    //! | CH1  | PA6 / PB4          | PA0（AF6）/ PA15（AF5） |
+    //! | CH2  | PA7 / PB5          | PA1/PA11（AF6）、PB3（AF5） |
+    //! | CH3  | PA5 / PB0 / PB6    | PA2/PA12（AF6）、PB6（AF5） |
+    //! | CH4  | PB1                | PA3（AF6）           |
+    //!
+    //! 引脚/AF 必须与所选通道对应；完整映射见各家数据手册表 5-3/5-4
+    //! （hal2 证据链 `buffered-pwm-route-evidence.json` 双源核对）。
 
     use core::future::poll_fn;
     use core::sync::atomic::Ordering;
@@ -168,21 +216,138 @@ mod l012 {
     use crate::pac;
 
     // ================= 位常量面 =================
-    // 手写 PAC 的 gtim 常量与手册 §16.10 一致（STM32 风格）。
-    use crate::pac::gtim as gt;
+    // 三家族一套整字常量：按 L012 PAC 同名风格本地定义（原 `use
+    // crate::pac::gtim as gt` 只对 L012 成立），位序经三家族 PAC 逐位比对
+    // 一致（见模块头注差异表），注释注明 l010/l011 生成 PAC 的对应字段。
 
-    /// 更新中断使能（DIER bit0，§16.10.4——PAC 未定义故补）
-    const DIER_UIE: u32 = 1 << 0;
+    /// 计数使能（CR1 bit0；l010/l011 PAC `gtim::cr1::cen`）
+    const CR1_EN: u32 = 1 << 0;
+    /// ARR 预装载（CR1 bit7；`cr1::arpe`）
+    const CR1_ARPE: u32 = 1 << 7;
+    /// 更新事件产生（EGR bit0；`egr::ug`）
+    const EGR_UG: u32 = 1 << 0;
+    /// 更新标志（ISR bit0；`isr::uif`）
+    const ISR_UIF: u32 = 1 << 0;
+    /// ICR 更新标志位（ICR bit0；`icr::uif`——R1W0，写 0 清除）
+    const ICR_UIF: u32 = 1 << 0;
+    /// 更新中断使能（IER bit0；`ier::uie`——L012 PAC 字段名 dier）
+    const IER_UIE: u32 = 1 << 0;
+    /// OC1M 低位段掩码（CCMR1 [6:4]；`ccmr1cmp::oc1m`）
+    const OC1M_MASK: u32 = 0x7 << 4;
+    /// OC1 = PWM 模式 1（CNT<CCR 输出有效电平）
+    const OC1M_PWM1: u32 = 6 << 4;
+    /// OC1 比较预装载使能（`ccmr1cmp::oc1pe`）
+    const OC1PE: u32 = 1 << 3;
+    /// OC2M 低位段掩码（CCMR1 [14:12]；`ccmr1cmp::oc2m`）
+    const OC2M_MASK: u32 = 0x7 << 12;
+    /// OC2 = PWM 模式 1
+    const OC2M_PWM1: u32 = 6 << 12;
+    /// OC2 比较预装载使能（`ccmr1cmp::oc2pe`）
+    const OC2PE: u32 = 1 << 11;
+    /// OC3M 低位段掩码（CCMR2 [6:4]，布局同 CCMR1 的 OC1M；`ccmr2cmp::oc3m`）
+    const OC3M_MASK: u32 = 0x7 << 4;
+    /// OC3 = PWM 模式 1
+    const OC3M_PWM1: u32 = 6 << 4;
+    /// OC3 比较预装载使能（`ccmr2cmp::oc3pe`）
+    const OC3PE: u32 = 1 << 3;
+    /// OC4M 低位段掩码（CCMR2 [14:12]；`ccmr2cmp::oc4m`）
+    const OC4M_MASK: u32 = 0x7 << 12;
+    /// OC4 = PWM 模式 1
+    const OC4M_PWM1: u32 = 6 << 12;
+    /// OC4 比较预装载使能（`ccmr2cmp::oc4pe`）
+    const OC4PE: u32 = 1 << 11;
+    /// CC1 输出使能（CCER bit0；`ccer::cc1e`）
+    const CC1E: u32 = 1 << 0;
+    /// CC1 极性（CCER bit1；`ccer::cc1p`）
+    const CC1P: u32 = 1 << 1;
+    /// CC2 输出使能（CCER bit4；`ccer::cc2e`）
+    const CC2E: u32 = 1 << 4;
+    /// CC2 极性（CCER bit5；`ccer::cc2p`）
+    const CC2P: u32 = 1 << 5;
+    /// CC3 输出使能（CCER bit8；`ccer::cc3e`）
+    const CC3E: u32 = 1 << 8;
+    /// CC3 极性（CCER bit9；`ccer::cc3p`）
+    const CC3P: u32 = 1 << 9;
+    /// CC4 输出使能（CCER bit12；`ccer::cc4e`）
+    const CC4E: u32 = 1 << 12;
+    /// CC4 极性（CCER bit13；`ccer::cc4p`）
+    const CC4P: u32 = 1 << 13;
+
+    // ---- APBEN1 门控位（KEY 内嵌本寄存器 [31:16]，与 crate::SYSCTRL_KEY
+    // 同协议；位序 l011 SDK 头 cw32l011.h:6022-6026 实锤）----
+    /// GTIM1 = bit6（三家族同位）
+    const APBEN1_GTIM1: u32 = 1 << 6;
+    /// GTIM2 = bit7（L012/l011；l010 无 GTIM2 实例）
+    #[cfg(any(feature = "cw32l012", feature = "cw32l011"))]
+    const APBEN1_GTIM2: u32 = 1 << 7;
+    /// GTIM3 = bit11（仅 L012；PAC `apben1::APBEN1_GTIM3`）
+    #[cfg(feature = "cw32l012")]
+    const APBEN1_GTIM3: u32 = 1 << 11;
+    /// GTIM4 = bit12（仅 L012）
+    #[cfg(feature = "cw32l012")]
+    const APBEN1_GTIM4: u32 = 1 << 12;
+
+    // ================= 家族差异适配 =================
+
+    /// 寄存器块类型：L012 手写 PAC 名 `Gtim`，l010/l011 生成 PAC 名 `GTIM`
+    #[cfg(feature = "cw32l012")]
+    type GtimRegs = pac::Gtim;
+    #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+    type GtimRegs = pac::GTIM;
+
+    /// 中断使能寄存器（L012 PAC 字段名 `dier`，l010/l011 生成名 `ier`；
+    /// 同址 0x0C）
+    #[inline]
+    fn ien(regs: &GtimRegs) -> &pac::Rw<u32> {
+        #[cfg(feature = "cw32l012")]
+        {
+            &regs.dier
+        }
+        #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+        {
+            &regs.ier
+        }
+    }
+
+    /// 输出比较 CCMR1（L012 PAC 字段名 `ccmr1`，l010/l011 生成名
+    /// `ccmr1cap`——同址 0x18，比较位面见 PAC `gtim::ccmr1cmp`）
+    #[inline]
+    fn ccmr1(regs: &GtimRegs) -> &pac::Rw<u32> {
+        #[cfg(feature = "cw32l012")]
+        {
+            &regs.ccmr1
+        }
+        #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+        {
+            &regs.ccmr1cap
+        }
+    }
+
+    /// 输出比较 CCMR2（同上，0x1C；`ccmr2cap`，位面 `gtim::ccmr2cmp`）
+    #[inline]
+    fn ccmr2(regs: &GtimRegs) -> &pac::Rw<u32> {
+        #[cfg(feature = "cw32l012")]
+        {
+            &regs.ccmr2
+        }
+        #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+        {
+            &regs.ccmr2cap
+        }
+    }
 
     // ================= 实例识别与 waker =================
 
-    /// 实例索引（0..3 = GTIM1..4，按基地址判定）
-    fn instance_of(regs: &pac::Gtim) -> usize {
+    /// 实例索引（0..3 = GTIM1..4，按基地址判定；l010 只有 0、l011 只有 0/1）
+    fn instance_of(regs: &GtimRegs) -> usize {
         match regs as *const _ as usize {
             pac::GTIM1_BASE => 0,
+            #[cfg(any(feature = "cw32l012", feature = "cw32l011"))]
             pac::GTIM2_BASE => 1,
+            #[cfg(feature = "cw32l012")]
             pac::GTIM3_BASE => 2,
-            _ => 3, // GTIM4_BASE
+            // L012 的 GTIM4_BASE；l010/l011 无此实例、该档不可达
+            _ => 3,
         }
     }
 
@@ -197,7 +362,7 @@ mod l012 {
     /// 运行中改占空比经 [`SetDutyCycle`](embedded_hal::pwm::SetDutyCycle)
     /// 或 [`GtimPwm::set_duty_bp`]（OCyPE 预装载 → 下一更新周期生效）。
     pub struct GtimPwm {
-        regs: &'static pac::Gtim,
+        regs: &'static GtimRegs,
         idx: usize,
         ch: PwmChannel,
     }
@@ -205,13 +370,15 @@ mod l012 {
     impl GtimPwm {
         /// 初始化并启动一路 PWM（阻塞版 `Gtim::start_pwm` 配方）
         ///
-        /// * `regs` — GTIM1..4 寄存器块（`p.gtim1` 等）
+        /// * `regs` — GTIM 寄存器块（`p.gtim1`/`p.gtim2` 等；实例数随家族
+        ///   L012=4、l011=2、l010=1）
         /// * `pin` — PWM 输出引脚（内部配为 AF 复用输出：清模拟/开漏/上下拉，
         ///   DIR=0 输出，`set_af(af)`——同阻塞版 `into_af_output`）
-        /// * `af` — 复用功能编号（表 9-2，如 GTIM1_CH1@PB04 = AF6）
+        /// * `af` — 复用功能编号（各家数据手册 AF 表，如 L012 的
+        ///   GTIM1_CH1@PB04 = AF6、l010 的 GTIM1_CH1@PB6 = AF6）
         /// * `config` — 通道/频率/初始占空比
         pub fn new(
-            regs: &'static pac::Gtim,
+            regs: &'static GtimRegs,
             pin: Pin<impl GpioPort>,
             af: u8,
             config: PwmConfig,
@@ -225,25 +392,34 @@ mod l012 {
             // CCR = (ARR+1) × 万分比 / 10000（100% → CCR=ARR+1，CNT 永不大于 CCR → 恒有效）
             let ccr = ((arr as u32 + 1) * config.duty_bp as u32 / 10_000) as u16;
 
-            // APBEN1.GTIMx 时钟（§4，bit6/7/11/12；KEY 写保护）。
-            // 读改写 + KEY（阻塞版 rcc.rs set_bits 配方）：保留其它外设的
-            // 使能位，不像整字写那样互相顶掉。
+            // APBEN1.GTIMx 时钟（KEY 内嵌本寄存器 [31:16]；读改写 + KEY
+            // 保留其它外设的使能位——与 ATIM/UART 门控同寄存器共存，
+            // 整字写会互相顶掉）。
             let sysctrl = unsafe { &*(pac::SYSCTRL_BASE as *const crate::Sysctrl) };
             let idx = instance_of(regs);
             let gate = match idx {
-                0 => pac::sysctrl::APBEN1_GTIM1,
-                1 => pac::sysctrl::APBEN1_GTIM2,
-                2 => pac::sysctrl::APBEN1_GTIM3,
-                _ => pac::sysctrl::APBEN1_GTIM4,
+                0 => APBEN1_GTIM1,
+                #[cfg(any(feature = "cw32l012", feature = "cw32l011"))]
+                1 => APBEN1_GTIM2,
+                // GTIM3/4 仅 L012（l010/l011 的 instance_of 不会给出该档）
+                #[cfg(feature = "cw32l012")]
+                2 => APBEN1_GTIM3,
+                #[cfg(feature = "cw32l012")]
+                _ => APBEN1_GTIM4,
+                #[cfg(not(feature = "cw32l012"))]
+                _ => unreachable!("l010/l011 无 GTIM3/4 实例"),
             };
             sysctrl
                 .apben1
-                .modify(|v| pac::sysctrl::KEY | (v & 0xFFFF) | gate);
+                .modify(|v| crate::SYSCTRL_KEY | (v & 0xFFFF) | gate);
 
-            // 引脚复用（阻塞版 into_af_output 配方：清附加态 → AF → 输出方向）
+            // 引脚复用（阻塞版 into_af_output 配方：清附加态 → AF → 输出方向；
+            // l010/l011 的 GPIO 无 PDR 下拉寄存器（gpio.rs impl_port_no_pdr!），
+            // 清下拉那步仅 L012 需要）
             let m = pin.mask();
             pin.port().mod_(Reg::OpEndrain, |v| v & !m);
             pin.port().mod_(Reg::Pur, |v| v & !m);
+            #[cfg(feature = "cw32l012")]
             pin.port().mod_(Reg::Pdr, |v| v & !m);
             pin.port().mod_(Reg::Analog, |v| v & !m); // 数字模式
             pin.set_af(af);
@@ -270,34 +446,28 @@ mod l012 {
             // CCER 使能输出（CCxP=0 高有效）
             match self.ch {
                 PwmChannel::Ch1 => {
-                    regs.ccmr1.modify(|v| {
-                        (v & !(gt::OC1M_MASK | gt::OC1PE | 0x3)) | gt::OC1M_PWM1 | gt::OC1PE
-                    });
-                    regs.ccer.modify(|v| (v & !gt::CC1P) | gt::CC1E);
+                    ccmr1(regs).modify(|v| (v & !(OC1M_MASK | OC1PE | 0x3)) | OC1M_PWM1 | OC1PE);
+                    regs.ccer.modify(|v| (v & !CC1P) | CC1E);
                 }
                 PwmChannel::Ch2 => {
-                    regs.ccmr1.modify(|v| {
-                        (v & !(gt::OC2M_MASK | gt::OC2PE | (0x3 << 8))) | gt::OC2M_PWM1 | gt::OC2PE
-                    });
-                    regs.ccer.modify(|v| (v & !gt::CC2P) | gt::CC2E);
+                    ccmr1(regs)
+                        .modify(|v| (v & !(OC2M_MASK | OC2PE | (0x3 << 8))) | OC2M_PWM1 | OC2PE);
+                    regs.ccer.modify(|v| (v & !CC2P) | CC2E);
                 }
                 PwmChannel::Ch3 => {
-                    regs.ccmr2.modify(|v| {
-                        (v & !(gt::OC3M_MASK | gt::OC3PE | 0x3)) | gt::OC3M_PWM1 | gt::OC3PE
-                    });
-                    regs.ccer.modify(|v| (v & !gt::CC3P) | gt::CC3E);
+                    ccmr2(regs).modify(|v| (v & !(OC3M_MASK | OC3PE | 0x3)) | OC3M_PWM1 | OC3PE);
+                    regs.ccer.modify(|v| (v & !CC3P) | CC3E);
                 }
                 PwmChannel::Ch4 => {
-                    regs.ccmr2.modify(|v| {
-                        (v & !(gt::OC4M_MASK | gt::OC4PE | (0x3 << 8))) | gt::OC4M_PWM1 | gt::OC4PE
-                    });
-                    regs.ccer.modify(|v| (v & !gt::CC4P) | gt::CC4E);
+                    ccmr2(regs)
+                        .modify(|v| (v & !(OC4M_MASK | OC4PE | (0x3 << 8))) | OC4M_PWM1 | OC4PE);
+                    regs.ccer.modify(|v| (v & !CC4P) | CC4E);
                 }
             }
 
             // UG 重装影子寄存器 → ARPE + EN 启动（§16.3.1.4）
-            regs.egr.write(gt::EGR_UG);
-            regs.cr1.write(gt::CR1_ARPE | gt::CR1_EN);
+            regs.egr.write(EGR_UG);
+            regs.cr1.write(CR1_ARPE | CR1_EN);
         }
 
         /// 直接写 CCR（原始占空比；OCyPE 预装载 → 下一更新周期生效）
@@ -357,43 +527,49 @@ mod l012 {
 
         /// 停止计数（保留 PSC/ARR/CCR 配置）
         pub fn stop(&mut self) {
-            self.regs.cr1.modify(|v| v & !gt::CR1_EN);
+            self.regs.cr1.modify(|v| v & !CR1_EN);
         }
 
         /// 恢复计数（保留已配置的 PSC/ARR/CCR）
         pub fn start(&mut self) {
-            self.regs.cr1.modify(|v| v | gt::CR1_EN);
+            self.regs.cr1.modify(|v| v | CR1_EN);
         }
 
         /// 异步等待一次更新事件（PWM 周期节拍；IER 使能 + waker 模式）
         ///
         /// 每次调用先清掉残留 UIF（`start` 配方的 EGR_UG 在 URS=0 时会置
         /// UIF，§16.10.5），再等**下一个**真实更新事件——返回时刻即一个
-        /// PWM 周期边界。等待期间才开 DIER.UIE，IRQ 唤醒即压掉（防风暴）。
+        /// PWM 周期边界。等待期间才开 IER.UIE，IRQ 唤醒即压掉（防风暴）。
         ///
         /// 前置条件（模块文档详述）：对应 GTIM 中断已 `bind_interrupts!`
         /// 绑定到 [`Gtim1Irq`]/[`Gtim2Irq`]/[`Gtim34Irq`]（GTIM3/4 共享
-        /// IRQ18 一条线）；NVIC 线由本方法幂等使能。
+        /// IRQ18 一条线，仅 L012；l010/l011 的 GTIM1/2 线独立）；NVIC 线
+        /// 由本方法幂等使能。
         pub async fn wait_update(&mut self) {
             let regs = self.regs;
             let idx = self.idx;
-            // NVIC 线使能（幂等；GTIM3/4 共用 IRQ18）
+            // NVIC 线使能（幂等；L012 的 GTIM3/4 共用 IRQ18，l010/l011 无
+            // GTIM3/4 实例）
             match idx {
                 0 => crate::interrupt::nvic_enable::<interrupt::GTIM1>(),
+                #[cfg(any(feature = "cw32l012", feature = "cw32l011"))]
                 1 => crate::interrupt::nvic_enable::<interrupt::GTIM2>(),
+                #[cfg(feature = "cw32l012")]
                 _ => crate::interrupt::nvic_enable::<interrupt::GTIM34>(),
+                #[cfg(not(feature = "cw32l012"))]
+                _ => unreachable!("l010/l011 无 GTIM3/4 实例"),
             }
-            // 前置清残留 UIF：PAC `Gtim::icr`（GTIMx_ICR @ 0x70）为 R1W0——
-            // 写 0 清除对应标志、写 1 无功能，写 `!ICR_UIF` 即仅 bit0=0 清
-            // 更新标志、其余位写 1 无副作用（与原裸指针写入 0xFFFF_FFFE 逐位一致）
-            regs.icr.write(!gt::ICR_UIF);
+            // 前置清残留 UIF：GTIMx_ICR（@ 0x70）为 R1W0——写 0 清除对应
+            // 标志、写 1 无功能，写 `!ICR_UIF` 即仅 bit0=0 清更新标志、
+            // 其余位写 1 无副作用
+            regs.icr.write(!ICR_UIF);
             poll_fn(|cx| {
                 GTIM_WAKER[idx].register(cx.waker());
-                if regs.isr.read() & gt::ISR_UIF != 0 {
-                    regs.dier.modify(|v| v & !DIER_UIE); // 就绪即压掉
+                if regs.isr.read() & ISR_UIF != 0 {
+                    ien(regs).modify(|v| v & !IER_UIE); // 就绪即压掉
                     Poll::Ready(())
                 } else {
-                    regs.dier.modify(|v| v | DIER_UIE); // 等待期间才开
+                    ien(regs).modify(|v| v | IER_UIE); // 等待期间才开
                     Poll::Pending
                 }
             })
@@ -422,44 +598,122 @@ mod l012 {
 
     // ================= 中断派发 =================
 
-    /// GTIM 更新中断公共处理：单发压掉 DIER.UIE 并唤醒等待者（ISR 的 UIF
+    /// GTIM 更新中断公共处理：单发压掉 IER.UIE 并唤醒等待者（ISR 的 UIF
     /// 标志不动——poll 复查后由下次 wait_update 的前置 ICR 清除）。
-    fn on_irq(idx: usize, regs: &'static pac::Gtim) {
-        if regs.isr.read() & gt::ISR_UIF != 0 {
-            regs.dier.modify(|v| v & !DIER_UIE);
+    fn on_irq(idx: usize, regs: &'static GtimRegs) {
+        if regs.isr.read() & ISR_UIF != 0 {
+            ien(regs).modify(|v| v & !IER_UIE);
             GTIM_WAKER[idx].wake();
         }
     }
 
-    /// GTIM1 中断标记（IRQ16，bind_interrupts! 绑定用）
+    /// GTIM1 中断标记（IRQ16，bind_interrupts! 绑定用；三家族同号线）
     pub struct Gtim1Irq;
     impl IrqHandler<interrupt::GTIM1> for Gtim1Irq {
         fn call() {
-            on_irq(0, unsafe { &*(pac::GTIM1_BASE as *const pac::Gtim) });
+            on_irq(0, unsafe { &*(pac::GTIM1_BASE as *const GtimRegs) });
         }
     }
 
-    /// GTIM2 中断标记（IRQ17）
+    /// GTIM2 中断标记（IRQ17；L012/l011——l010 无 GTIM2 实例）
+    #[cfg(any(feature = "cw32l012", feature = "cw32l011"))]
     pub struct Gtim2Irq;
+    #[cfg(any(feature = "cw32l012", feature = "cw32l011"))]
     impl IrqHandler<interrupt::GTIM2> for Gtim2Irq {
         fn call() {
-            on_irq(1, unsafe { &*(pac::GTIM2_BASE as *const pac::Gtim) });
+            on_irq(1, unsafe { &*(pac::GTIM2_BASE as *const GtimRegs) });
         }
     }
 
-    /// GTIM3/4 共享中断标记（IRQ18 `GTIM34`——两个实例各自查各自 UIF，
-    /// 未挂起者空跑无害；时钟门控未开的实例 ISR 读回 0）
+    /// GTIM3/4 共享中断标记（IRQ18 `GTIM34`——仅 L012 有 GTIM3/4 实例；
+    /// 两个实例各自查各自 UIF，未挂起者空跑无害；时钟门控未开的实例
+    /// ISR 读回 0）
+    #[cfg(feature = "cw32l012")]
     pub struct Gtim34Irq;
+    #[cfg(feature = "cw32l012")]
     impl IrqHandler<interrupt::GTIM34> for Gtim34Irq {
         fn call() {
-            on_irq(2, unsafe { &*(pac::GTIM3_BASE as *const pac::Gtim) });
-            on_irq(3, unsafe { &*(pac::GTIM4_BASE as *const pac::Gtim) });
+            on_irq(2, unsafe { &*(pac::GTIM3_BASE as *const GtimRegs) });
+            on_irq(3, unsafe { &*(pac::GTIM4_BASE as *const GtimRegs) });
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// 本地整字常量 ↔ L012 手写 PAC 整字常量 / l010-l011 生成 PAC 的
+        /// 小写字段模块，逐位比对（三家族一套位面的锚点测试；位常量为本
+        /// 模块私有，测试挂在这里）
+        #[test]
+        fn gtim_bitplane_matches_family_pacs() {
+            #[cfg(feature = "cw32l012")]
+            {
+                use crate::pac::gtim as gt;
+                assert_eq!(CR1_EN, gt::CR1_EN);
+                assert_eq!(CR1_ARPE, gt::CR1_ARPE);
+                assert_eq!(EGR_UG, gt::EGR_UG);
+                assert_eq!(ISR_UIF, gt::ISR_UIF);
+                assert_eq!(ICR_UIF, gt::ICR_UIF);
+                assert_eq!(OC1M_MASK, gt::OC1M_MASK);
+                assert_eq!(OC1M_PWM1, gt::OC1M_PWM1);
+                assert_eq!(OC1PE, gt::OC1PE);
+                assert_eq!(OC3M_MASK, gt::OC3M_MASK);
+                assert_eq!(OC3M_PWM1, gt::OC3M_PWM1);
+                assert_eq!(OC3PE, gt::OC3PE);
+                assert_eq!(OC4M_MASK, gt::OC4M_MASK);
+                assert_eq!(OC4M_PWM1, gt::OC4M_PWM1);
+                assert_eq!(OC4PE, gt::OC4PE);
+                assert_eq!(CC1E, gt::CC1E);
+                assert_eq!(CC3P, gt::CC3P);
+                assert_eq!(CC4E, gt::CC4E);
+            }
+            #[cfg(feature = "cw32l010")]
+            {
+                use crate::pac::gtim as gt;
+                assert_eq!(CR1_EN, 1 << gt::cr1::cen_POS);
+                assert_eq!(CR1_ARPE, gt::cr1::arpe_MASK);
+                assert_eq!(EGR_UG, gt::egr::ug_MASK);
+                assert_eq!(ISR_UIF, gt::isr::uif_MASK);
+                assert_eq!(ICR_UIF, gt::icr::uif_MASK);
+                assert_eq!(OC1M_MASK, gt::ccmr1cmp::oc1m_MASK);
+                assert_eq!(OC1M_PWM1, 6 << gt::ccmr1cmp::oc1m_POS);
+                assert_eq!(OC1PE, gt::ccmr1cmp::oc1pe_MASK);
+                assert_eq!(OC3M_MASK, gt::ccmr2cmp::oc3m_MASK);
+                assert_eq!(OC3PE, gt::ccmr2cmp::oc3pe_MASK);
+                assert_eq!(OC4M_MASK, gt::ccmr2cmp::oc4m_MASK);
+                assert_eq!(OC4PE, gt::ccmr2cmp::oc4pe_MASK);
+                assert_eq!(CC1E, gt::ccer::cc1e_MASK);
+                assert_eq!(CC2P, gt::ccer::cc2p_MASK);
+                assert_eq!(CC3E, gt::ccer::cc3e_MASK);
+                assert_eq!(CC4P, gt::ccer::cc4p_MASK);
+                // PSC/ARR 位面（l010/l011 有独立 PSC 寄存器，与 L012 同配方）
+                assert_eq!(gt::psc::psc_MASK, 0xFFFF);
+                assert_eq!(gt::arr::arr_MASK, 0xFFFF);
+                assert_eq!(IER_UIE, gt::ier::uie_MASK);
+            }
+            #[cfg(feature = "cw32l011")]
+            {
+                use crate::pac::gtim as gt;
+                assert_eq!(CR1_EN, 1 << gt::cr1::cen_POS);
+                assert_eq!(CR1_ARPE, gt::cr1::arpe_MASK);
+                assert_eq!(ISR_UIF, gt::isr::uif_MASK);
+                assert_eq!(ICR_UIF, gt::icr::uif_MASK);
+                assert_eq!(OC1M_MASK, gt::ccmr1cmp::oc1m_MASK);
+                assert_eq!(OC1PE, gt::ccmr1cmp::oc1pe_MASK);
+                assert_eq!(OC3M_MASK, gt::ccmr2cmp::oc3m_MASK);
+                assert_eq!(OC4M_PWM1, 6 << gt::ccmr2cmp::oc4m_POS);
+                assert_eq!(CC1E, gt::ccer::cc1e_MASK);
+                assert_eq!(CC2P, gt::ccer::cc2p_MASK);
+                assert_eq!(CC4P, gt::ccer::cc4p_MASK);
+                assert_eq!(IER_UIE, gt::ier::uie_MASK);
+            }
         }
     }
 }
 
-#[cfg(feature = "cw32l012")]
-pub use l012::*;
+#[cfg(any(feature = "cw32l012", feature = "cw32l010", feature = "cw32l011"))]
+pub use l012gen::*;
 
 // ================= 经典家族分支 =================
 #[cfg(any(
@@ -782,7 +1036,7 @@ mod classic {
 
         /// 满量程（万分比；`SetDutyCycle` 语义下 100% = 10000）
         ///
-        /// 固定万分比满量程同 [`super::l012::GtimPwm`]——周期最大 65536
+        /// 固定万分比满量程同 [`super::l012gen::GtimPwm`]——周期最大 65536
         /// 放不进 `SetDutyCycle::max_duty_cycle` 的 u16 返回值。
         pub fn max_duty(&self) -> u16 {
             10_000
@@ -990,6 +1244,9 @@ pub use classic::*;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ===== GTIM 位常量 ↔ 三家族 PAC 位面锚定（见 l012gen 内同名测试，
+    // 常量为 l012gen 私有故测试挂在 l012gen::tests 下）=====
 
     // 与阻塞版 cw32l012-hal/src/gtim.rs 的同名单元测试同源
     #[test]
