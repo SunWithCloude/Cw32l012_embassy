@@ -247,7 +247,8 @@ mod l012 {
             } else {
                 pac::sysctrl::APBEN2_I2C2
             };
-            sysctrl.apben2.write(pac::sysctrl::KEY | gate);
+            // 读改写:其它外设门控同住 APBEN2,整字写会顶掉已有使能位
+            sysctrl.apben2.modify(|v| pac::sysctrl::KEY | v | gate);
 
             scl.set_af(af);
             sda.set_af(af);
@@ -886,7 +887,8 @@ mod f030 {
             {
                 assert!(idx == 0, "L010 仅 I2C1 实例");
                 // i2c1en = APBEN1.6(L012 代组布局,带 KEY 写保护)
-                sysctrl.apben1.write(crate::SYSCTRL_KEY | (1 << 6));
+                // 读改写:其它外设门控同住 APBEN1,整字写会顶掉已有使能位
+                sysctrl.apben1.modify(|v| crate::SYSCTRL_KEY | v | (1 << 6));
             }
             // 经典代单 I2C 家族(l031 组):i2c1en = APBEN1.11,无 KEY,读改写
             #[cfg(any(

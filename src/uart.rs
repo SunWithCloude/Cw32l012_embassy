@@ -500,7 +500,9 @@ impl Uart {
                 1 => pac::sysctrl::APBEN1_UART2,
                 _ => pac::sysctrl::APBEN1_UART3,
             };
-            sysctrl.apben1.write(pac::sysctrl::KEY | gate);
+            // 读改写:GTIM/ATIM/SPI 等的门控同住 APBEN1,整字写会顶掉
+            // 先初始化外设的使能位(l010/l011 侧 2026-11-14 同款修复)
+            sysctrl.apben1.modify(|v| pac::sysctrl::KEY | v | gate);
         }
         #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
         {

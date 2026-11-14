@@ -192,9 +192,11 @@ mod l012 {
         fn new_inner(regs: &'static crate::Adc, idx: usize, clk: AdcClk) -> Self {
             // APBEN1.ADC 时钟（L012 带写保护键）
             let sysctrl = unsafe { &*(pac::SYSCTRL_BASE as *const crate::Sysctrl) };
+            // 读改写:GTIM/ATIM/UART 等的门控同住 APBEN1,整字写会顶掉
+            // 先初始化外设的使能位(rcc.rs set_bits 实机配方)
             sysctrl
                 .apben1
-                .write(pac::sysctrl::KEY | pac::sysctrl::APBEN1_ADC);
+                .modify(|v| pac::sysctrl::KEY | (v & 0xFFFF) | pac::sysctrl::APBEN1_ADC);
 
             // 模拟块复位 + 分频 + 上电（CR bit8 复位为 1 须保留，经 CR_RESET 置回）
             regs.cr.modify(|v| {

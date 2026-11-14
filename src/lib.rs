@@ -464,7 +464,7 @@ pub const SYSCTRL_KEY: u32 = 0x5A5A << 16;
 /// 打开 GPIOA 端口时钟(AHBEN bit4,全家族相同)。
 pub fn sysctrl_enable_gpioa(sysctrl: &'static crate::Sysctrl) {
     #[cfg(any(feature = "cw32l012", feature = "cw32l010", feature = "cw32l011"))]
-    sysctrl.ahben.write(SYSCTRL_KEY | (1 << 4));
+    sysctrl.ahben.modify(|v| crate::SYSCTRL_KEY | v | (1 << 4));
     #[cfg(any(
         feature = "cw32f030",
         feature = "cw32l031",
@@ -481,7 +481,7 @@ pub fn sysctrl_enable_gpioa(sysctrl: &'static crate::Sysctrl) {
 /// 打开 GPIOB 端口时钟(AHBEN bit5,全家族相同)。
 pub fn sysctrl_enable_gpiob(sysctrl: &'static crate::Sysctrl) {
     #[cfg(any(feature = "cw32l012", feature = "cw32l010", feature = "cw32l011"))]
-    sysctrl.ahben.write(SYSCTRL_KEY | (1 << 5));
+    sysctrl.ahben.modify(|v| crate::SYSCTRL_KEY | v | (1 << 5));
     #[cfg(any(
         feature = "cw32f030",
         feature = "cw32l031",
@@ -508,7 +508,7 @@ pub fn sysctrl_enable_gpiob(sysctrl: &'static crate::Sysctrl) {
 ))]
 pub fn sysctrl_enable_gpioc(sysctrl: &'static crate::Sysctrl) {
     #[cfg(any(feature = "cw32l012", feature = "cw32l011"))]
-    sysctrl.ahben.write(SYSCTRL_KEY | (1 << 6));
+    sysctrl.ahben.modify(|v| crate::SYSCTRL_KEY | v | (1 << 6));
     #[cfg(any(
         feature = "cw32f030",
         feature = "cw32l031",
@@ -532,7 +532,7 @@ pub fn sysctrl_enable_gpioc(sysctrl: &'static crate::Sysctrl) {
 ))]
 pub fn sysctrl_enable_gpiof(sysctrl: &'static crate::Sysctrl) {
     #[cfg(feature = "cw32l012")]
-    sysctrl.ahben.write(SYSCTRL_KEY | (1 << 7));
+    sysctrl.ahben.modify(|v| crate::SYSCTRL_KEY | v | (1 << 7));
     #[cfg(any(
         feature = "cw32f030",
         feature = "cw32l031",
