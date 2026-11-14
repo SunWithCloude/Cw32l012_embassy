@@ -117,6 +117,10 @@ compile_error!(
     feature = "cw32l011"
 ))]
 pub mod adc;
+// ATIM 高级定时器互补 PWM：L012 家族独占（手册 §16，三相电机 PWM 路线）。
+// 经典家族的 ATIM 是另一套 IP（CR0/CMMR 面，见 src/timer.rs classic 分支头注）
+#[cfg(feature = "cw32l012")]
+pub mod atim;
 #[cfg(feature = "cw32l012")]
 pub mod dac;
 #[cfg(feature = "cw32l012")]
