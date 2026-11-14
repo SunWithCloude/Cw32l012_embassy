@@ -38,7 +38,7 @@
 | `wdt` | （L012）IWDT 独立看门狗 + WWDGT 窗口看门狗，非异步薄封装，带喂狗窗口求解器（`WindowConfig::for_feed_interval`） |
 | `dac` | （L012）双通道 12 位输出（`set_ch1`/`set_ch2`/`set_both` + 回读），DMA 波形输出——单发 `write_dma` 与 `start_dma_loop`/`stop_dma` 环形循环（GTIM TRGO 供拍）；含 DAC→ADC 片内回环示例 |
 | `dma` | 两代 IP：L012 `Dma`——4 通道（IRQ9 `DMA12` = 通道 1/2、IRQ10 `DMA34` = 通道 3/4），`mem_to_mem`/`periph_to_mem`/`mem_to_periph`；经典组 `ClassicDma`（F020/F030/L031/L052/L083/R031/W031）——F030/F020/L083 5 通道、L031 组 4 通道，**F003/L010/L011 无 DMA 硬件**（F020 通道 4/5 无 NVIC 线，仅轮询）。两代各配硬件触发源表（`pac::dma::hs`） |
-| `critical-section-impl` | PRIMASK 实现（默认开启；全固件唯一） |
+| critical-section | 实现由 cortex-m 的 `critical-section-single-core` 提供（随本 crate 自动带上；全固件唯一） |
 | `defmt` | 可选 feature：驱动错误/配置类型（30+）derive `defmt::Format`；`rtt_hello` 示例打通 defmt-rtt 端到端日志 |
 
 `examples/` 下有 20 个可运行示例（blink、UART echo/缓冲/DMA、SPI 回环/DMA、I2C 扫描、
@@ -47,22 +47,22 @@ ADC 异步/DMA/F030、DAC 波形与 DAC→ADC 回环、RTC 闹钟、看门狗、
 
 ## 快速开始
 
-本 crate 依赖同级放置的 PAC 仓库：默认家族用 `cw32l012-pac`，其余 10 家族用
-`cw32-pacs`（各 PAC 位于 `../cw32-pacs/crates/<家族>-pac`）。**仓库要放在一起**：
-
-```
-Desktop/
-├── cw32l012-pac/        ← 默认 `cw32l012` feature 需要
-├── cw32-pacs/           ← 构建其余 10 家族时需要
-└── embassy-cw32/        ← 本仓库
-```
+全部家族 PAC 来自 crates.io——**不需要克隆任何 sibling 仓库**：
 
 ```toml
 [dependencies]
-embassy-cw32 = { path = "../embassy-cw32", features = ["rt"] }
+embassy-cw32 = { version = "0.4", features = ["rt"] }
 embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
 embassy-time = "0.5"
 ```
+
+三个家族 crate 带 `-um` 后缀（用户手册转录版）——因为原名在 crates.io 被
+第三方占用：`cw32f030-pac-um`、`cw32l010-pac-um`、`cw32l012-pac-um`。其余
+八个用原名（`cw32f003-pac`、`cw32f020-pac`、`cw32l011-pac`、`cw32l031-pac`、
+`cw32l052-pac`、`cw32l083-pac`、`cw32r031-pac`、`cw32w031-pac`）。
+
+开发本仓时用 `[patch.crates-io]` 把 PAC 依赖指回本地检出即可，CHANGELOG
+0.4.0 条目有说明。
 
 ```rust,no_run
 #![no_std]
@@ -158,8 +158,9 @@ embassy-time 语义安全）。`now()` 带单调钳制（`LAST_NOW`），消除�
 | 依赖 | 零依赖 | embassy 生态 |
 | 向量表 | 自带（符号 `UART1_irq` 等） | cortex-m-rt + PAC `rt`（符号 `UART1` 等） |
 
-⚠ **不要同时启用**两家的 critical-section 实现
-（`cw32l012-hal/critical-section-impl` 与本 crate 默认实现），链接会冲突。
+⚠ **不要在一个固件里启用两个 critical-section 实现**——例如
+`cw32l012-hal/critical-section-impl` 与本 crate 默认拉入的 cortex-m 实现，
+链接会冲突。
 
 ## 验证状态
 
@@ -183,7 +184,7 @@ embassy-time 语义安全）。`now()` 带单调钳制（`LAST_NOW`），消除�
 
 ## F030 家族备注
 
-- `--no-default-features --features "rt,cw32f030,critical-section-impl"` 构建
+- `--no-default-features --features "rt,cw32f030"` 构建
   CW32F030/A030（生成版 `cw32f030-pac`，cw32-pac-gen 产物）。
 - 复位默认时钟 **8MHz**（HSI 48M/6）——`Config::default()` 已处理。
 - 本代 SYSCTRL 的 AHBEN/APBEN **无 KEY 保护**（不同于 L012 的 0x5A5A

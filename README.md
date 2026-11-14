@@ -30,30 +30,31 @@ Two hardware generations: the **L012 generation** (`cw32l010`/`cw32l011`/`cw32l0
 | `wdt` | two generations: L012 `Iwdt`/`Wwdgt`; classic `ClassicIwdt`/`ClassicWwdgt` (F003/F020/F030/L031/L052/L083/R031/W031) — same key sequence and bit plane, but the vendor library requires start-before-config for IWDT (0xCCCC → unlock → CR/ARR → sync wait → 0xAAAA feed), the dedicated RC10K counts at a nominal 10 kHz per the vendor macro (datasheet electrical table says typical 8 kHz, 4–12 kHz over temperature), and gates live in APBEN1 without a key. Non-async thin wrappers with a feed-window solver (`WindowConfig::for_feed_interval` / `ClassicWindowConfig::for_feed_interval`) |
 | `dac` | (L012) dual-channel 12-bit output (`set_ch1`/`set_ch2`/`set_both` + readback) with DMA waveform output — one-shot `write_dma` and `start_dma_loop`/`stop_dma` ring mode (GTIM TRGO as trigger); DAC→ADC internal loopback example included |
 | `dma` | two generations: L012 `Dma` — 4 channels (IRQ9 `DMA12` = ch1/2, IRQ10 `DMA34` = ch3/4) with `mem_to_mem`/`periph_to_mem`/`mem_to_periph`; classic `ClassicDma` (F020/F030/L031/L052/L083/R031/W031) — 5 channels on F030/F020/L083, 4 on the L031 group, **no DMA hardware on F003/L010/L011** (F020 channels 4/5 have no NVIC line, polling only). Hardware trigger source tables (`pac::dma::hs`) per generation |
-| `critical-section-impl` | PRIMASK implementation (on by default; one per firmware) |
+| critical-section | provided by cortex-m's `critical-section-single-core`, pulled in automatically (one implementation per firmware) |
 | `defmt` | optional feature: driver error/config types (30+) derive `defmt::Format`; the `rtt_hello` example wires defmt-rtt end to end |
 
 Twenty-nine runnable examples live in `examples/` (blink, UART echo/buffered/DMA, SPI loopback/DMA, I2C scan, ADC async/DMA/F030, DAC wave and DAC→ADC loop, RTC alarm and WDT demo on both the L012 and F030 generations, DMA mem2mem on both generations, timer PWM, RTT hello), each gated by its family feature in `Cargo.toml`.
 
 ## Getting started
 
-This crate depends on sibling checkouts of its PAC crates: `cw32l012-pac` for the
-default family, `cw32-pacs` for the other 10 families (each PAC sits at
-`../cw32-pacs/crates/<family>-pac`). **Land the repos side by side**:
-
-```
-Desktop/
-├── cw32l012-pac/       <- needed for the default `cw32l012` feature
-├── cw32-pacs/          <- needed when building for one of the other 10 families
-└── embassy-cw32/       <- this repo
-```
+All family PACs come from crates.io — **no sibling checkouts needed**:
 
 ```toml
 [dependencies]
-embassy-cw32 = { path = "../embassy-cw32", features = ["rt"] }
+embassy-cw32 = { version = "0.4", features = ["rt"] }
 embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
 embassy-time = "0.5"
 ```
+
+Three family crates carry a `-um` suffix (user-manual transcription) because
+their plain names are occupied on crates.io by third parties:
+`cw32f030-pac-um`, `cw32l010-pac-um`, `cw32l012-pac-um`. The other eight ship
+under their plain names (`cw32f003-pac`, `cw32f020-pac`, `cw32l011-pac`,
+`cw32l031-pac`, `cw32l052-pac`, `cw32l083-pac`, `cw32r031-pac`, `cw32w031-pac`).
+
+To hack on this repo itself, point the PAC dependencies back at local
+checkouts with a `[patch.crates-io]` section instead of sibling path deps:
+see `CONTRIBUTING` notes in the CHANGELOG 0.4.0 entry.
 
 ```rust,no_run
 #![no_std]
@@ -158,9 +159,9 @@ Two parallel options, pick one:
 | Dependencies | none | embassy ecosystem |
 | Vector table | built in (`UART1_irq`, …) | cortex-m-rt + PAC `rt` (`UART1`, …) |
 
-⚠ Do **not** enable both critical-section implementations
-(`cw32l012-hal/critical-section-impl` and this crate's default) in one firmware —
-the link will fail.
+⚠ Do **not** enable two critical-section implementations in one firmware —
+e.g. `cw32l012-hal/critical-section-impl` next to the cortex-m one this crate
+pulls in by default; the link will fail.
 
 ## Verification status
 
@@ -185,7 +186,7 @@ the link will fail.
 
 ## F030 family notes
 
-- `--no-default-features --features "rt,cw32f030,critical-section-impl"` builds
+- `--no-default-features --features "rt,cw32f030"` builds
   for CW32F030/A030 against the generated `cw32f030-pac` (cw32-pac-gen).
 - Reset clock is **8 MHz** (HSI 48M/6) — `Config::default()` handles it.
 - The SYSCTRL AHBEN/APBEN registers have **no key protection** on this

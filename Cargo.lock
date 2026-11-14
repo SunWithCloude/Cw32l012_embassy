@@ -118,103 +118,77 @@ checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
 name = "cw32f003-pac"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "663f91212efd72b1612a8a3c32bcb663b0abac5e5e5e51a80066974993803e62"
+version = "0.1.2"
 dependencies = [
  "cortex-m-rt",
 ]
 
 [[package]]
 name = "cw32f020-pac"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4112608d43f04c3c7931c8cf1b2732763a04b2165ed94743cbbb5c6ea98d79b"
+version = "0.1.2"
 dependencies = [
  "cortex-m-rt",
 ]
 
 [[package]]
-name = "cw32f030-pac"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b769a5a7a2e06d672f31b1bd9ce0ea8927917e16400f1a4f977f0a788ab66219"
+name = "cw32f030-pac-um"
+version = "0.1.2"
 dependencies = [
- "cortex-m",
  "cortex-m-rt",
- "vcell",
 ]
 
 [[package]]
-name = "cw32l010_pac"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bfbee12912599071e121eb63f1a2627c7250f082c0297a0d3f0a92215265a51"
+name = "cw32l010-pac-um"
+version = "0.1.2"
 dependencies = [
- "cortex-m",
  "cortex-m-rt",
- "critical-section",
- "vcell",
 ]
 
 [[package]]
 name = "cw32l011-pac"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "437e0c546949a458f340effdc1712b8ef02311087ab0307d99f47a3ffcb052d9"
+version = "0.1.2"
 dependencies = [
  "cortex-m-rt",
 ]
 
 [[package]]
-name = "cw32l012-pac"
-version = "0.2.1"
-source = "git+https://github.com/SunWithCloude/Cw32l012_pac?branch=main#4df76681348b68a980d0176e9d720f3dd1af07bf"
+name = "cw32l012-pac-um"
+version = "0.3.0"
 dependencies = [
  "cortex-m-rt",
 ]
 
 [[package]]
 name = "cw32l031-pac"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22621cb0ac6306cf931808081edbe7711d85728f73723ccf1cd5d50bdbb99a83"
+version = "0.1.2"
 dependencies = [
  "cortex-m-rt",
 ]
 
 [[package]]
 name = "cw32l052-pac"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d71daac113f6009de65c4a01765e98655cada582ccdce684d5b35dd3e2f652b"
+version = "0.1.2"
 dependencies = [
  "cortex-m-rt",
 ]
 
 [[package]]
 name = "cw32l083-pac"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b4a194b15adee33529b438a81fc790fb04e4444ddff1b471d08f11af605e88a"
+version = "0.1.2"
 dependencies = [
  "cortex-m-rt",
 ]
 
 [[package]]
 name = "cw32r031-pac"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d9a2dc496364692547d281deb53780614391ac424130ee6055b5e4994ef8a57"
+version = "0.1.2"
 dependencies = [
  "cortex-m-rt",
 ]
 
 [[package]]
 name = "cw32w031-pac"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e0b92cc1600a95f910465824a30ab72079dee7061f3a2110fac7745a5e4e9bc"
+version = "0.1.2"
 dependencies = [
  "cortex-m-rt",
 ]
@@ -317,15 +291,14 @@ dependencies = [
 name = "embassy-cw32"
 version = "0.3.0"
 dependencies = [
- "cortex-m",
  "cortex-m-rt",
  "critical-section",
  "cw32f003-pac",
  "cw32f020-pac",
- "cw32f030-pac",
- "cw32l010_pac",
+ "cw32f030-pac-um",
+ "cw32l010-pac-um",
  "cw32l011-pac",
- "cw32l012-pac",
+ "cw32l012-pac-um",
  "cw32l031-pac",
  "cw32l052-pac",
  "cw32l083-pac",
