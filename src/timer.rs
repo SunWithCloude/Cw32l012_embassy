@@ -766,7 +766,7 @@ mod classic {
         /// ARR=0xFFFF 时周期 65536 无法用 CCR 表达满占空）
         fn apply_duty(&self, duty_bp: u16) {
             let arr = self.regs.arr.read() & 0xFFFF;
-            let period = arr as u32 + 1;
+            let period = arr + 1;
             let ticks = period * duty_bp as u32 / 10_000; // 0..=period
             let mode = if duty_bp == 0 {
                 CCXM_FORCE_LOW
@@ -809,7 +809,7 @@ mod classic {
                 return 10_000;
             }
             let arr = self.regs.arr.read() & 0xFFFF;
-            ((self.ccr() * 10_000) / (arr as u32 + 1)) as u16
+            ((self.ccr() * 10_000) / (arr + 1)) as u16
         }
 
         /// 当前计数值（观测 CNT 在 0..ARR 间滚动 = PWM 在跑）

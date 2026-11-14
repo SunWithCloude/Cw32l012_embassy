@@ -302,6 +302,36 @@
   `calc_pwm_pow2_div`（PRS 变体量化，宿主测试 5 项）。示例
   `timer_pwm_f030`（GTIM1_CH1@PB04 AF6，厂商库宏
   `PB04_AFx_GTIM1CH1` cw32f030_gpio.h:931 + 数据手册 V1.9 表 5-4）。
+- **经典 ATIM 三相互补 PWM**（`atim_classic` 模块，`AtimPwm`，cfg
+  `cw32f030` 一个家族先行——l031/l052/l083/r031/w031 的 ATIM 指令语义
+  另有出入、f003 是另一变体、f020 无 ATIM，本轮一律不接）：经典代 ATIM
+  是与 L012 ATIM **完全不同的 IP**（寄存器面无一处同构：单 CR 含
+  COMP/PWM2S/PRS[6:4]/BUFPEN/URS/UG 命令位 + MSCR/FLTR/TRIG/CHxCR/
+  DTR/RCR + CHxCCRA/CCRB 双缓冲，f030 PAC `pac::ATIM` 基址 0x4001_2C00
+  整字 + 小写字段常量模块）。API：`AtimPwm::new`（三对互补引脚
+  `Option<AtimPair>` 任选、至少一对，构造即门控 APBEN2 bit7 + 配置 +
+  启动计数但 **DTR.MOE=0 无输出**）/`enable`/`disable`（MOE 主输出）/
+  `stop`/`start`（计数 EN）/`set_duty_bp(ch, bp)`（CCRA 影子预装载，
+  下一 UEV 生效，仅内部比较值 0<compare<period）/`duty_bp`/`is_braked`
+  （ISR.BIF 观测）/`clear_break`（ICR 清标志，**不承诺**刹车恢复序列——
+  BKE/AOE 保持 0，无刹车源）/`period_config`/`dead_time_code`/
+  `dead_time_ticks`/`wait_update`（UIF 更新节拍，IRQ13，UIE 单发纪律）。
+  硬件语义（CR 配方 COMP+PWM2S+MODE=10 边沿对齐+BUFPEN+URS、FLTR 三路
+  OCM=110 PWM1 非反相、CHxCR 仅 BUFEA、UG 命令字装载影子后 ICR 写 0
+  清全标志、DTR.MOE@12/DTEN@9 在 DTR 不在 MSCR）对照《CW32x030 UM
+  V2.5》p277/278/296/300/305 核对；DTR 死区四段编码（2~129/130~256/
+  258~506/514~1010 tick，上限 1010）收 ns 向上取整、四段边界+单调性
+  + 编码下限搜索宿主测试全覆盖（p278 第四例 63.25us 系排版误按公式
+  64.25us）；**PRS 档位无 128**（000..110=1..64、111=256，手册锚点
+  "111：256"，任务草稿"0..7→1..128"有误已修正），分频/ARR 计算
+  `calc_prs_arr` 宿主可测；ICR 为 RW 写 0 清（写 1 无效、复位 0x7FFFF、
+  保留 bit1 保全），与 GTIM 同纪律。引脚/AF 双源（数据手册 V1.9 表
+  5-3/5-4 + SDK 宏）：CH1A=PA5/PA8/PB2/PB5、CH1B=PA7/PA15/PB13、
+  CH2A=PA4/PA9/PB6/PB10、CH2B=PB0/PB3/PB14、CH3A=PA3/PA10/PB7/PB11、
+  CH3B=PB1/PB4/PB15（全 AF7）；CH4 内部通道无引出无互补不暴露。
+  诚实标注 compiles-not-run：未上板验证波形/死区/刹车路径；死区按标称
+  PCLK 向上取整（RCC 无 ClockBounds 包络，不做 ±容差保守包络）。
+  示例 `atim_motor_f030`（三相互补+500ns 死区+斜坡，LQFP48/C8T7）。
 
 ### 变更
 
