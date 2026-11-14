@@ -100,9 +100,9 @@ compile_error!(
     "必须启用一个家族 feature:cw32l012 / cw32l010 / cw32l011 / cw32f030 / cw32l031 / cw32l052 / cw32r031 / cw32w031 / cw32f020 / cw32f003 / cw32l083"
 );
 
-// ATIM 高级定时器互补 PWM（经典代 IP，f030 先行；与 L012 ATIM 完全不同
-// 的寄存器面——COMP/PWM2S + CHxCCRA/CCRB 双缓冲 + DTR 死区四段编码，
-// 差异表与安全边界见 src/atim_classic.rs 模块文档）
+// ATIM 高级定时器互补 PWM（经典代 IP，f030/l052/l083；与 L012 ATIM 完全
+// 不同的寄存器面——COMP/PWM2S + CHxCCRA/CCRB 双缓冲 + DTR 死区四段编码，
+// 家族差异表、手册级证据与安全边界见 src/atim_classic.rs 模块文档）
 pub mod atim_classic;
 
 // ADC 四套 IP：L012（l012 分支）/经典组 f030/f020/f003（classic 分支）/
