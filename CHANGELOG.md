@@ -50,6 +50,52 @@
   ⚠ **compiles-not-run**：实机验证待板，上板前勿驱动真电机（模块文档
   含诚实的安全边界声明：不做电机安全、不做故障闩锁承诺、死区不构成
   防直通保证）。
+- **l083 串行多实例布线补齐（UART×6 / SPI×2 / I2C×2）**：此前 l083 只接了
+  UART1/SPI1/I2C1（旧注释称"PAC 只收编 UART1 寄存器块"已过时——cw32l083-pac
+  0.1.2 的 `UART1..UART6`/`SPI1..SPI2`/`I2C1..I2C2` 基址与实例**全都有**，
+  基址 UART1@0x40013800/UART2@0x40004400/UART3@0x40004800/UART4@0x40004c00/
+  UART5@0x40005000/UART6@0x40011400、SPI1@0x40013000/SPI2@0x40003800、
+  I2C1@0x40005400/I2C2@0x40005800）。本轮只做 IRQ+构造布线：
+  - **uart.rs**：`instance_of` 按基址 match 扩为 UART1..6→0..5；per-实例
+    waker/管道/标记静态量从 3 槽扩为按家族实例数（l083=6，其余 3 不变）；
+    新增 `new_uart2..new_uart6`（同步与 BufferedUart 两套，门控按实例查表：
+    UART1=APBEN2.9、UART2=APBEN1.7、UART3=APBEN1.8、UART4=APBEN1.9、
+    UART5=APBEN1.10、UART6=APBEN2.1——PAC apben1/apben2 位域，无 KEY 读改写）。
+    **共享向量纪律**：l083 的 UART 两两共享 NVIC 线（UART1/4=IRQ27
+    `UART1_UART4`、UART2/5=IRQ28 `UART2_UART5`、UART3/6=IRQ29
+    `UART3_UART6`，typelevel 拼写以 PAC interrupt 模块标记类型/device.x
+    符号为准），参照 SPI2/3 共享 `SPI23` 的做法新增 `Uart1Uart4Irq`/
+    `Uart2Uart5Irq`/`Uart3Uart6Irq` 派发标记（依次检查组内两个实例），
+    l083 原 `Uart1Irq` 移除（只派发半个共享向量会留下另一半 IER 常开，
+    有中断风暴风险）。示例 `uart_echo_l083`（UART2 PA06/PA07 AF2 +
+    `UART2_UART5 => Uart2Uart5Irq` 绑定）；链接产物 ELF 向量槽实测：
+    IRQ28 → 0xFD（强符号 `UART2_UART5` 处理函数），未绑定向量恒为
+    DefaultHandler 0xF5——证明共享向量符号拼写与 device.x `PROVIDE`
+    弱符号正确对接（拼写错会静默落到 DefaultHandler，编译期不可见）。
+  - **spi.rs**：l083 双实例独立向量（SPI1=IRQ25/SPI2=IRQ26）——`new`
+    （l083 要求同时绑定 `SPI1`+`SPI2`）、`new_spi2`、`Spi2Irq` 标记；
+    门控 SPI2=APBEN1.6（与 f030 同位，PAC 位域核对）。
+  - **i2c.rs**：l083 双实例独立向量（I2C1=IRQ23/I2C2=IRQ24）——`new`
+    （同时绑定）、`new_i2c1`/`new_i2c2`、`I2c2Irq` 标记；门控
+    I2C1=APBEN1.11、I2C2=APBEN1.12；风暴防护的 NVIC 压线/重开按实例
+    （经典分支无 IER，只能动 NVIC 线）。
+  - 引脚路线写进各模块文档表（数据手册表 5-3..5-8 摘要；全表见
+    cw32-hal2 数据仓库 `af/cw32l083-serial.yaml`）。
+  - **DMA 路线待后续**：l083 UART2..6/SPI2 的 DMA 触发源映射本轮未接
+    （不加接 DMA 的构造 overload）——`write_dma`/`read_dma`/
+    `transfer_dma` 对未接实例显式 panic 防静默错触发（原实现会拿 UART1/
+    SPI1 的触发源错误搬运），文档注明"待后续接线"。
+  - 顺带修复：①f030 的 `new_uart2`/`new_uart3` 门控此前 assert
+    `idx==0`，构造即 panic——改为查表 UART2=APBEN1.7/UART3=APBEN1.8
+    （F030 PAC 位域）；②lib.rs 家族互斥宏名单补上漏掉的 `cw32l083`
+    （此前 l083 与其它家族 feature 同开不会触发互斥 compile_error，
+    会以更隐晦的 `pac` 重导出冲突报错）；③timer.rs 经典分支 `arr.read()`
+    返回类型两族不同（l012=u16/l083=u32），l083 feature 下 clippy 报
+    unnecessary_cast——按家族中立写法 + 局部 allow 收敛（l083 示例
+    clippy -D warnings 随之全绿）。
+  - ⚠ **compiles-not-run**：l083 实板未验证——本轮改动经 11 家族矩阵
+    check、clippy -D warnings、宿主测试与 l083 示例全链接（含向量槽
+    ELF 核验）保证编译期正确；运行语义（共享向量派发、门控查表）待实板。
 - **FLASH 自编程**（`flash` 模块，L012 先行——经典家族 FLASH 是另一套
   IP，本轮未做，模块头注已注明）：片上 FLASH 读 / 页擦除 / 编程，
   参数存储与校准数据落盘的底层。API：`Flash::new(p.flashctrl)`（自动开

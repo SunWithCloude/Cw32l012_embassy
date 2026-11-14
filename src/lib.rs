@@ -81,7 +81,7 @@ macro_rules! fam_exclusive {
 }
 fam_exclusive!(
     "cw32l012", "cw32l010", "cw32l011", "cw32f030", "cw32l031", "cw32l052", "cw32r031", "cw32w031",
-    "cw32f020", "cw32f003"
+    "cw32f020", "cw32f003", "cw32l083"
 );
 #[cfg(not(any(
     feature = "cw32l012",
@@ -97,7 +97,7 @@ fam_exclusive!(
     feature = "cw32l083"
 )))]
 compile_error!(
-    "必须启用一个家族 feature:cw32l012 / cw32l010 / cw32l011 / cw32f030 / cw32l031 / cw32l052 / cw32r031 / cw32w031 / cw32f020 / cw32f003"
+    "必须启用一个家族 feature:cw32l012 / cw32l010 / cw32l011 / cw32f030 / cw32l031 / cw32l052 / cw32r031 / cw32w031 / cw32f020 / cw32f003 / cw32l083"
 );
 
 // ATIM 高级定时器互补 PWM（经典代 IP，f030 先行；与 L012 ATIM 完全不同

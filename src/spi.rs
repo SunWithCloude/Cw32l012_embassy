@@ -8,6 +8,19 @@
 //! 无 KEY、ICR 同为 R1W0——厂商库 `SPIx->ICR &= ~flag` 实锤;F020/F003
 //! 的 CR1 位面与 F030 逐 PAC 比对一致,单实例）。
 //!
+//! l083（经典组双实例）：SPI1/SPI2 寄存器面与 F030 同构（逐 PAC 比对），
+//! 中断为独立向量（`SPI1` IRQ25 / `SPI2` IRQ26）。引脚组合摘要（数据
+//! 手册表 5-3..5-8，全表见 cw32-hal2 数据仓库 `af/cw32l083-serial.yaml`，
+//! TX/RX 同组同 AF）：
+//!
+//! | 实例 | 常用组合（SCK/MISO/MOSI） |
+//! |------|---------------------------|
+//! | SPI1 | PA10/PA11/PA12（AF5）、PB03/PB04/PB05（AF5）、PB13/PB14/PB15（AF5）、PC01/PC02/PC03（AF3）、PD13/PD14/PD15（AF4）、PE04/PE05/PE06（AF4）、PE09/PE10/PE11（AF4） |
+//! | SPI2 | PA02/PA00/PA01（AF5）、PB08/PB07/PB06（AF5）、PB10/PC14/PC15（AF5）、PB13/PB14/PB15（AF4）、PD01/PD03/PD04（AF5）、PD09/PD10/PD11（AF4）、PE13/PE14/PE15（AF4） |
+//!
+//! l083 的 DMA 触发源映射（SPI2 部分）本轮未接线——`transfer_dma`/
+//! `write_dma` 仅 SPI1 可用，SPI2 调用会显式 panic（见 [`Spi::transfer_dma`]）。
+//!
 //! # DMA 收发（L012 与经典组；语义级实现待实板验证）
 //!
 //! [`Spi::transfer_dma`]（全双工：RX/TX 双通道并行）/[`Spi::write_dma`]
@@ -125,7 +138,8 @@ mod fam {
     feature = "cw32l083"
 ))]
 mod fam {
-    /// 经典组 SYSCTRL 的 AHBEN/APBEN 无 KEY 保护(厂商库 |= 直写)
+    /// 经典组 SYSCTRL 的 AHBEN/APBEN 无 KEY 保护(厂商库 |= 直写)。
+    /// SPI1=APBEN2.8、SPI2=APBEN1.6(f030 与 l083 的 PAC 位域同位)
     pub fn gate(sysctrl: &crate::Sysctrl, idx: usize) {
         match idx {
             0 => sysctrl.apben2.modify(|v| v | (1 << 8)),
@@ -204,7 +218,7 @@ fn instance_of(regs: &'static crate::Spi) -> usize {
     #[cfg(not(any(feature = "cw32l010", feature = "cw32l011", feature = "cw32f003")))]
     match regs as *const _ as usize {
         pac::SPI1_BASE => 0,
-        #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
+        #[cfg(any(feature = "cw32l012", feature = "cw32f030", feature = "cw32l083"))]
         pac::SPI2_BASE => 1,
         #[cfg(feature = "cw32l012")]
         pac::SPI3_BASE => 2,
@@ -263,12 +277,10 @@ impl Spi {
         Self::new_inner(regs, sck, mosi, miso, af, config)
     }
 
-    /// 经典代单 SPI 家族(l031 等)入口:中断名 SPI1,单实例
-    /// （l083 硬件有 SPI1/SPI2,但 PAC 只收编 SPI1 寄存器块）
+    /// 经典代单 SPI 家族(l031 组)入口:中断名 SPI1,单实例
     #[cfg(any(
         feature = "cw32l031",
         feature = "cw32l052",
-        feature = "cw32l083",
         feature = "cw32r031",
         feature = "cw32w031"
     ))]
@@ -279,6 +291,22 @@ impl Spi {
         miso: Pin<impl GpioPort>,
         af: u8,
         _irqs: impl Binding<interrupt::SPI1>,
+        config: Config,
+    ) -> Self {
+        Self::new_inner(regs, sck, mosi, miso, af, config)
+    }
+
+    /// 初始化 SPI 主机（l083 入口：SPI1/SPI2 双实例、独立向量，
+    /// `bind_interrupts!` 需同时绑定 `SPI1 => spi::Spi1Irq;` 与
+    /// `SPI2 => spi::Spi2Irq;`）。
+    #[cfg(feature = "cw32l083")]
+    pub fn new(
+        regs: &'static crate::Spi,
+        sck: Pin<impl GpioPort>,
+        mosi: Pin<impl GpioPort>,
+        miso: Pin<impl GpioPort>,
+        af: u8,
+        _irqs: impl Binding<interrupt::SPI1> + Binding<interrupt::SPI2>,
         config: Config,
     ) -> Self {
         Self::new_inner(regs, sck, mosi, miso, af, config)
@@ -348,6 +376,20 @@ impl Spi {
         Self::new_inner(regs, sck, mosi, miso, af, config)
     }
 
+    /// 初始化 SPI2（l083,独立向量 SPI2/IRQ26;引脚组合见模块文档表）。
+    #[cfg(feature = "cw32l083")]
+    pub fn new_spi2(
+        regs: &'static crate::Spi,
+        sck: Pin<impl GpioPort>,
+        mosi: Pin<impl GpioPort>,
+        miso: Pin<impl GpioPort>,
+        af: u8,
+        _irqs: impl Binding<interrupt::SPI2>,
+        config: Config,
+    ) -> Self {
+        Self::new_inner(regs, sck, mosi, miso, af, config)
+    }
+
     /// 初始化 SPI3（IRQ 绑定收窄到 SPI23;仅 L012）。
     #[cfg(feature = "cw32l012")]
     pub fn new_spi3(
@@ -400,10 +442,15 @@ impl Spi {
             feature = "cw32l052",
             feature = "cw32r031",
             feature = "cw32w031",
-            feature = "cw32f020",
-            feature = "cw32l083"
+            feature = "cw32f020"
         ))]
         crate::interrupt::nvic_enable::<interrupt::SPI1>();
+        // l083 双实例、独立向量:SPI1=IRQ25、SPI2=IRQ26
+        #[cfg(feature = "cw32l083")]
+        match idx {
+            0 => crate::interrupt::nvic_enable::<interrupt::SPI1>(),
+            _ => crate::interrupt::nvic_enable::<interrupt::SPI2>(),
+        }
         #[cfg(any(feature = "cw32l012", feature = "cw32f030"))]
         match idx {
             0 => crate::interrupt::nvic_enable::<interrupt::SPI1>(),
@@ -689,21 +736,25 @@ impl Spi {
     const CR1_DMARX: u32 = pac::spi::cr1::dmarx_MASK;
 
     /// 发送方向硬件触发源（§8.8.4 / 厂商库 DMA_HardTrig_SPIx_TXBufferE）。
-    /// SPI2 实例仅 f030 有（其余家族 PAC 只有 SPI1），恒取 SPI1。
+    ///
+    /// SPI2 触发源接线仅 f030；l083 的 SPI2 触发源映射**待后续接线**
+    /// （本轮 DMA 仅 SPI1 可用，SPI2 显式 panic 防静默错触发）。
     fn tx_hs(&self) -> u8 {
         match self.idx {
+            0 => crate::dma::hs::SPI1_TX,
             #[cfg(feature = "cw32f030")]
             1 => crate::dma::hs::SPI2_TX,
-            _ => crate::dma::hs::SPI1_TX,
+            _ => panic!("该实例的 DMA 触发源未接线（l083 SPI2 待后续,本轮仅 SPI1）"),
         }
     }
 
     /// 接收方向硬件触发源（§8.8.4 / 厂商库 DMA_HardTrig_SPIx_RXBufferNE）
     fn rx_hs(&self) -> u8 {
         match self.idx {
+            0 => crate::dma::hs::SPI1_RX,
             #[cfg(feature = "cw32f030")]
             1 => crate::dma::hs::SPI2_RX,
-            _ => crate::dma::hs::SPI1_RX,
+            _ => panic!("该实例的 DMA 触发源未接线（l083 SPI2 待后续,本轮仅 SPI1）"),
         }
     }
 
@@ -922,6 +973,17 @@ impl IrqHandler<interrupt::SPI23> for Spi3Irq {
 #[cfg(feature = "cw32f030")]
 pub struct Spi2Irq;
 #[cfg(feature = "cw32f030")]
+impl IrqHandler<interrupt::SPI2> for Spi2Irq {
+    fn call() {
+        on_irq(1, unsafe { &*(pac::SPI2_BASE as *const crate::Spi) });
+    }
+}
+
+/// SPI2 中断标记（l083:独立向量 IRQ26,typelevel 名 SPI2;
+/// `bind_interrupts!` 侧写作 `SPI2 => spi::Spi2Irq;`）
+#[cfg(feature = "cw32l083")]
+pub struct Spi2Irq;
+#[cfg(feature = "cw32l083")]
 impl IrqHandler<interrupt::SPI2> for Spi2Irq {
     fn call() {
         on_irq(1, unsafe { &*(pac::SPI2_BASE as *const crate::Spi) });
