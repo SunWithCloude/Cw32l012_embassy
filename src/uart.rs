@@ -505,8 +505,18 @@ impl Uart {
         #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
         {
             assert!(idx == 0, "L010/L011 仅 UART1 实例");
-            // uart1en = APBEN1.3(L012 代组布局,带 KEY 写保护)
-            sysctrl.apben1.write(crate::SYSCTRL_KEY | (1 << 3));
+            // uart1en = APBEN1.3（l011 SDK 头 cw32l011.h:6030
+            // SYSCTRL_APBEN1_UART1_Pos=3，l010 头 cw32l010.h:5670 同位）。
+            // KEY 协议查证（2026-11-14）：这两家族的 SYSCTRL **没有独立
+            // KEY 寄存器**——KEY 内嵌于各受保护寄存器的 [31:16]
+            // （cw32l011.h:6018-6019 SYSCTRL_APBEN1_KEY_Pos=16；cw32l010.h
+            // :5662-5663 同；PAC SYSCTRL 结构体首字段是 CR0 而非 KEY，
+            // 独立 KEY@0x00 的是 RTC），与 L012 代组同协议。
+            // 读改写 + KEY 一并写入：保留同寄存器其它使能位（ADC/VC/SPI1/
+            // UART2/ATIM/GTIM1/GTIM2——与 PWM 门控共存，整字写会顶掉）
+            sysctrl
+                .apben1
+                .modify(|v| crate::SYSCTRL_KEY | (v & 0xFFFF) | (1 << 3));
         }
         // 经典代单 UART 家族(l031 组):uart1en = APBEN2.9,无 KEY,读改写
         #[cfg(any(

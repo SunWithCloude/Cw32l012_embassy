@@ -1,21 +1,45 @@
-//! ATIM 高级定时器互补 PWM（L012 家族独占，手册 §16）——三相电机 PWM 路线。
+//! ATIM 高级定时器互补 PWM（L012 代组三家族：`cw32l012`/`cw32l010`/
+//! `cw32l011`，L012 手册 §16）——三相电机 PWM 路线。
 //!
 //! CH1-3 主/互补输出对（六路，死区插入）+ CH4 单端 + BK 刹车输入。寄存器
-//! 面为 STM32 风格（CR1/CR2/CCMR/CCER/BDTR/DIER/EGR，影子寄存器预装载），
+//! 面为 STM32 风格（CR1/CR2/CCMR/CCER/BDTR/IER/EGR，影子寄存器预装载），
 //! PSC/ARR 计算与 [`crate::timer`] 的 GTIM 完全同源（直接复用
 //! [`calc_pwm_psc_arr`]）。经典家族的 ATIM 是另一套 IP（CR0/CMMR 面，见
 //! `src/timer.rs` classic 分支头注），不在本模块范围。
 //!
+//! # 三家族差异表（一套代码，cfg + 薄适配收敛）
+//!
+//! | 差异点 | L012 | l010 | l011 |
+//! |--------|------|------|------|
+//! | 中断使能寄存器 | PAC 字段名 `dier` | 生成名 `ier`（同址 0x0C） | 同 l010 |
+//! | ISR @0x10 | RO | PAC 类型标 RW（读用一致，驱动只读） | RO |
+//! | CCMR 输出比较 | `ccmr1`/`ccmr2`（位面 §16.10） | `ccmr1cap`/`ccmr2cap`（同址 0x18/0x1C，位面在 PAC `atim::ccmr1cmp`/`ccmr2cmp`） | 同 l010 |
+//! | EGR/ICR 访问类型 | WO | RW（写用法一致） | RW |
+//! | 外部 BK 引脚 | 有（7 条路线） | **无**（见下） | 4 条 |
+//! | CH4/CH4N 引脚 | 有 | 无（PA0 CH4/PA1 CH4N 被振荡器占用排除） | 有 |
+//! | 门控 | APBEN1.ATIM=bit5（KEY 内嵌 [31:16]） | 同位 | 同位 |
+//! | NVIC 线 | IRQ13 `ATIM` | 同 | 同 |
+//!
+//! 位面三家族逐位一致：基址同为 0x4000_1400、寄存器偏移同表，hal2 证据
+//! 链 `docs/atim-complementary-evidence.json` 的 `register_variant` 三
+//! 家族同为 `cw32l010_v1`（同一套 IP）；DTG 四段编码、死区上限 1008 tick、
+//! 死区时钟 = PCLK（CKD=0，不走 PSC）、BIF R1W0 清不掉等 qualified_subset
+//! 关键口径 l010/l011 与 L012 逐条相同。位常量按 L012 PAC 同名风格本地
+//! 定义（原 `pac::atim` 整字常量只对 L012 成立），l010/l011 对应字段模块
+//! 在注释注明。
+//!
 //! # 状态：compiles-not-run（诚实标注）
 //!
 //! 编译通过 + 宿主机单元测试（DTG 四段编码全覆盖 / ICR 清位字构造）；
-//! **实机验证待板**。寄存器语义三源核对：本仓 PAC `pac::atim` 位常量
-//! （手册逐位转录，其注释记作 §17.10——与 §16 为同一章）、手册 §16、
+//! **实机验证待板——L012 有阻塞版同源背书，l010/l011 两者皆无**。
+//! 寄存器语义三源核对：本仓三套 PAC `atim` 位面（L012 手写整字常量 /
+//! l010-l011 生成小写字段模块，逐位比对一致）、各家手册（L012 §16、
+//! l010/l011 用户手册 ATIM 章 §14.9，证据链 register_sections 逐节核对）、
 //! fan2nd/cw32-hal2 证据链 `docs/atim-complementary-evidence.json`
 //! （MIT）——死区时钟不走 PSC、DTG 四段编码、刹车硬件异步清 MOE 等
 //! 关键口径均出自该证据链。**上板验证前不要驱动任何真电机。**
 //!
-//! # 死区（手册 §16，BDTR.DTG[7:0]）
+//! # 死区（L012 手册 §16，BDTR.DTG[7:0]）
 //!
 //! 死区时钟 = f_DTS = PCLK：本驱动把 CKD 固定在 00（=/1），死区不随
 //! 计数分频 PSC 变化。`dead_time_ns` 向上取整到最近可编码值（宁多勿少，
@@ -32,7 +56,7 @@
 //! 编解码助手 [`encode_dtg`] / [`decode_dtg`][`decode_dtg`]（宿主机测试
 //! 全量覆盖：四段边界、向上取整、上限）。
 //!
-//! # 刹车（手册 §16，BDTR）
+//! # 刹车（L012 手册 §16，BDTR）
 //!
 //! 给了 `bk` 引脚才使能 BKE；BKP 极性由 `bk_polarity_high` 选、BKF 数字
 //! 滤波 0..=15（f_DTS 周期口径）。刹车事件硬件**异步**清 MOE——不经
@@ -41,6 +65,13 @@
 //! 期间 BIF 清不掉**（[`AtimPwm::clear_break`] 返回 false）。`aoe=false`
 //! （默认建议）时恢复由 `clear_break()` + `enable()` 显式完成；
 //! `aoe=true` 时刹车解除后的下一更新事件硬件自动重置 MOE。
+//!
+//! ⚠ **l010 无任何合格的外部刹车引脚路线**（hal2 证据链
+//! `atim-complementary-route-evidence.json` external_bk_routes=0：手册
+//! BK 唯二候选 PA1=OSC_OUT、PA7=SWDIO，分别被振荡器占用与调试口保护
+//! 排除）——l010 的刹车只能走内部 VC 源（AF1.BKVC1E/BKVC2E 路由，本
+//! 驱动不建模），`new` 的 `bk` 参数**必须传 None**（传 `Some` 运行时
+//! panic）。l011 有 4 条 BK 路线（见引脚表）。
 //!
 //! # 推荐保守面（构造即写入）
 //!
@@ -57,9 +88,14 @@
 //! 互补对 CHxN = CHx 经死区取反（CCER 每通道 4bit：CCxE/CCxP/CCxNE/
 //! CCxNP；CC5/CC6 无互补、本驱动不建模）。CR2.CCDS 保持复位值 0（DMA
 //! 请求跟随捕获/比较事件的口径——STM32 同名位约定；本驱动不用 DMA，
-//! 需更新事件触发 DMA 的场景由调用方自行置 1）。
+//! 需更新事件触发 DMA 的场景由调用方自行置 1。⚠ l010/l011 手册 CR2
+//! 无 CCDS 位——bit3 保留，保持复位值 0 即可）。
 //!
-//! # 引脚复用（数据手册 V1.0 表 5-3，SDK 双源验证）
+//! # 引脚复用（SDK 宏 + 数据手册表 5-3 双源，hal2 证据链
+//! `atim-pwm-route-evidence.json` / `atim-complementary-route-evidence.json`
+//! 核对；被振荡器/调试口占用的路线已排除）
+//!
+//! L012（数据手册 V1.0 表 5-3）：
 //!
 //! | 信号 | 引脚（AF）                                                       |
 //! |------|------------------------------------------------------------------|
@@ -73,12 +109,38 @@
 //! | CH4N | PA2（AF7）、PB8（AF5）                                           |
 //! | BK   | PA0 / PA6 / PB12 / PB9（AF7）、PA12 / PB5（AF5）、PC13（AF6）    |
 //!
-//! 输出脚配方同 [`crate::timer`]（清开漏/上下拉/模拟 → AF → DIR=0 输出）；
-//! **刹车输入脚不同**：DIR=1 输入、保留调用方指定的上/下拉（外部上拉是
-//! 低有效刹车的常规接法，驱动不得清掉）、不清开漏。GPIO 端口 AHBEN
-//! 时钟由调用方先开（同 GTIM 示例配方）。
+//! l010（无 CH4/CH4N/BK——见刹车节）：
 //!
-//! # 中断（IRQ13 `ATIM`）
+//! | 信号 | 引脚（AF）              |
+//! |------|-------------------------|
+//! | CH1  | PB4（AF7）              |
+//! | CH1N | PA2 / PA4（AF7）        |
+//! | CH2  | PB2（AF7）              |
+//! | CH2N | PA5 / PB3（AF7）        |
+//! | CH3  | PA3（AF7）              |
+//! | CH3N | PA6（AF7）              |
+//!
+//! l011：
+//!
+//! | 信号 | 引脚（AF）                        |
+//! |------|-----------------------------------|
+//! | CH1  | PA5 / PA8 / PB5（均 AF7）         |
+//! | CH1N | PA15 / PA7（均 AF7）              |
+//! | CH2  | PA9 / PB6（均 AF7）               |
+//! | CH2N | PA4 / PB0 / PB3（均 AF7）         |
+//! | CH3  | PA10（AF7）                       |
+//! | CH3N | PB1 / PB4（均 AF7）               |
+//! | CH4  | PA11 / PA3（均 AF7）              |
+//! | CH4N | PA2（AF7）                        |
+//! | BK   | PA0 / PA6（AF7）、PA12 / PB5（AF5） |
+//!
+//! 输出脚配方同 [`crate::timer`]（清开漏/上拉/模拟 → AF → DIR=0 输出；
+//! l010/l011 无 PDR 下拉寄存器，清下拉那步仅 L012 需要）；**刹车输入脚
+//! 不同**：DIR=1 输入、保留调用方指定的上/下拉（外部上拉是低有效刹车
+//! 的常规接法，驱动不得清掉）、不清开漏。GPIO 端口 AHBEN 时钟由调用方
+//! 先开（同 GTIM 示例配方）。
+//!
+//! # 中断（IRQ13 `ATIM`，三家族同号线）
 //!
 //! ```ignore
 //! embassy_cw32::bind_interrupts!(struct Irqs {
@@ -87,11 +149,11 @@
 //! ```
 //!
 //! [`AtimPwm::wait_update`] 用更新标志 UIF 做周期节拍（等待时才开
-//! DIER.UIE，IRQ 唤醒即压掉，同 GTIM 的"单发纪律"）；[`AtimIrq`] 同时
+//! IER.UIE，IRQ 唤醒即压掉，同 GTIM 的"单发纪律"）；[`AtimIrq`] 同时
 //! 防御性处理 COMIF/BIF（压掉对应使能位并唤醒预留 waker——本驱动自身
-//! 不开这两个中断，但防止调用方手工开 DIER.COMIE/BIE 后的风暴）。
+//! 不开这两个中断，但防止调用方手工开 IER.COMIE/BIE 后的风暴）。
 //!
-//! # 用法（三相互补，20kHz / 1µs 死区）
+//! # 用法（三相互补，20kHz / 1µs 死区；l011 引脚，L012 同构）
 //!
 //! ```ignore
 //! embassy_cw32::bind_interrupts!(struct Irqs {
@@ -109,7 +171,7 @@
 //!     Some((Pin::new(p.gpioa, 10), 7)), // CH3  = PA10 AF7
 //!     Some((Pin::new(p.gpiob, 1), 7)),  // CH3N = PB1  AF7
 //!     no_pin,                           // CH4 单端，本例不用
-//!     Some((Pin::new(p.gpioa, 6), 7)),  // BK = PA6 AF7
+//!     Some((Pin::new(p.gpioa, 0), 7)),  // BK = PA0 AF7（l011；l010 传 None）
 //!     false, 0,                         // BKP=0 低有效 / BKF=0 无滤波
 //!     Irqs,
 //! )?;
@@ -140,17 +202,160 @@ use crate::pac;
 use crate::timer::{PwmError, calc_pwm_psc_arr};
 
 // ================= 位常量面 =================
-// PAC（cw32l012-pac-um =0.3.0，生成器产物不可改动）只转录了部分 ATIM 位
-// 常量；下表为 PAC 缺失部分的本地补充，位序按手册 §16 逐位补齐。PAC 已有
-// 的常量经 `use crate::pac::atim as at;` 引用，不在此重复定义。
-use crate::pac::atim as at;
+// 三家族一套整字常量：L012 手写 PAC（cw32l012-pac-um =0.3.0 `atim` 模块）
+// 只覆盖该家族，l010/l011 生成 PAC（cw32l010-pac-um/cw32l011-pac =0.1.2）
+// 是小写字段模块风格（`pub mod cr1 { pub const cen_POS: u32 = 0; ... }`）
+// 且字段名不同（ccmr1cap/ier 等）——故按 L012 同款命名在本地定义整字
+// 常量（位序经三 PAC 逐位比对一致，hal2 证据 register_variant 同为
+// cw32l010_v1），注释注明 l010/l011 PAC 对应字段模块。PAC 不可改、
+// 不从此处引用。
+//
+// 下表含 L012 PAC 已有常量的同名本地重定义 + 原 PAC 缺失部分（注释记作
+// 手册 §16 逐位补齐），l010/l011 的位序另经 PAC 字段模块逐位核对。
 
-// ---- CR2 (0x04)：输出控制（本驱动保持复位值 0，常量供调用方按需使用）----
+// ---- 家族差异适配（寄存器块类型 + 字段名） ----
+
+/// 寄存器块类型：L012 手写 PAC 名 `Atim`，l010/l011 生成 PAC 名 `ATIM`
+/// （基址同为 0x4000_1400）
+#[cfg(feature = "cw32l012")]
+type AtimRegs = pac::Atim;
+#[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+type AtimRegs = pac::ATIM;
+
+/// 中断使能寄存器（L012 PAC 字段名 `dier`，l010/l011 生成名 `ier`；
+/// 同址 0x0C，位面 `atim::ier`）
+#[inline]
+fn ienable(regs: &AtimRegs) -> &pac::Rw<u32> {
+    #[cfg(feature = "cw32l012")]
+    {
+        &regs.dier
+    }
+    #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+    {
+        &regs.ier
+    }
+}
+
+/// 输出比较 CCMR1（L012 PAC 字段名 `ccmr1`，l010/l011 生成名 `ccmr1cap`
+/// ——同址 0x18，比较位面见 PAC `atim::ccmr1cmp`）
+#[inline]
+fn ccmr1(regs: &AtimRegs) -> &pac::Rw<u32> {
+    #[cfg(feature = "cw32l012")]
+    {
+        &regs.ccmr1
+    }
+    #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+    {
+        &regs.ccmr1cap
+    }
+}
+
+/// 输出比较 CCMR2（同上，0x1C；`ccmr2cap`，位面 `atim::ccmr2cmp`）
+#[inline]
+fn ccmr2(regs: &AtimRegs) -> &pac::Rw<u32> {
+    #[cfg(feature = "cw32l012")]
+    {
+        &regs.ccmr2
+    }
+    #[cfg(any(feature = "cw32l010", feature = "cw32l011"))]
+    {
+        &regs.ccmr2cap
+    }
+}
+
+// ---- CR1 (0x00) ----
+/// 计数使能（bit0；l010/l011 PAC `atim::cr1::cen`）
+const CR1_CEN: u32 = 1 << 0;
+/// ARR 预装载（bit7；`cr1::arpe`）
+const CR1_ARPE: u32 = 1 << 7;
+
+// ---- APBEN1 门控 ----
+/// ATIM = bit5（三家族同位：L012 PAC `apben1::APBEN1_ATIM` 同值；l011
+/// SDK 头 cw32l011.h:6026 SYSCTRL_APBEN1_ATIM_Pos=5；KEY 内嵌 [31:16]）
+const APBEN1_ATIM: u32 = 1 << 5;
+
+// ---- CCMR1 输出比较面（0x18；l010/l011 位面见 PAC `atim::ccmr1cmp`）----
+/// OC1M 低位段掩码（[6:4]；`ccmr1cmp::oc1m`）
+const OC1M_MASK: u32 = 0x7 << 4;
+/// OC1M 第 4 位（[16]；`ccmr1cmp::oc1mh`）
+const OC1MH: u32 = 1 << 16;
+/// OC1 = PWM 模式 1（CNT<CCR 输出有效电平）
+const OC1M_PWM1: u32 = 6 << 4;
+/// OC1 比较预装载使能（`ccmr1cmp::oc1pe`）
+const OC1PE: u32 = 1 << 3;
+/// OC2M 低位段掩码（[14:12]；`ccmr1cmp::oc2m`）
+const OC2M_MASK: u32 = 0x7 << 12;
+/// OC2M 第 4 位（[24]；`ccmr1cmp::oc2mh`）
+const OC2MH: u32 = 1 << 24;
+/// OC2 = PWM 模式 1
+const OC2M_PWM1: u32 = 6 << 12;
+/// OC2 比较预装载使能（`ccmr1cmp::oc2pe`）
+const OC2PE: u32 = 1 << 11;
+
+// ---- CCER (0x20)：每通道 4bit（E/P/NE/NP；`atim::ccer::cc1e` 等）----
+/// CC1 输出使能
+const CC1E: u32 = 1 << 0;
+/// CC1 极性
+const CC1P: u32 = 1 << 1;
+/// CC1N 输出使能
+const CC1NE: u32 = 1 << 2;
+/// CC1N 极性
+const CC1NP: u32 = 1 << 3;
+/// CC2 输出使能
+const CC2E: u32 = 1 << 4;
+/// CC2 极性
+const CC2P: u32 = 1 << 5;
+/// CC2N 输出使能
+const CC2NE: u32 = 1 << 6;
+/// CC2N 极性
+const CC2NP: u32 = 1 << 7;
+/// CC3 输出使能
+const CC3E: u32 = 1 << 8;
+/// CC3 极性
+const CC3P: u32 = 1 << 9;
+/// CC3N 输出使能
+const CC3NE: u32 = 1 << 10;
+/// CC3N 极性
+const CC3NP: u32 = 1 << 11;
+/// CC4 输出使能
+const CC4E: u32 = 1 << 12;
+/// CC4 极性
+const CC4P: u32 = 1 << 13;
+// （CC4NE/CC4NP @ bit14/15 本驱动不建模 CH4N，不定义——位面见 PAC
+// `atim::ccer::cc4ne/cc4np`）
+
+// ---- EGR (0x14) / ISR (0x10) ----
+/// 更新事件产生（`egr::ug`）
+const EGR_UG: u32 = 1 << 0;
+/// 更新标志（`isr::uif`）
+const ISR_UIF: u32 = 1 << 0;
+
+// ---- BDTR (0x44)：位序三家族一致（`atim::bdtr::dtg/ossi/.../moe`）----
+/// DTG 死区段掩码（[7:0]；`bdtr::dtg`）
+const BDTR_DTG_MASK: u32 = 0xFF;
+/// 空闲态输出选择 OSSI（bit10）
+const BDTR_OSSI: u32 = 1 << 10;
+/// 关闭态输出选择 OSSR（bit11）
+const BDTR_OSSR: u32 = 1 << 11;
+/// 刹车使能 BKE（bit12）
+const BDTR_BKE: u32 = 1 << 12;
+/// 刹车极性 BKP（bit13）
+const BDTR_BKP: u32 = 1 << 13;
+/// 刹车自动恢复 AOE（bit14）
+const BDTR_AOE: u32 = 1 << 14;
+/// 主输出使能 MOE（bit15）
+const BDTR_MOE: u32 = 1 << 15;
+/// 刹车数字滤波 BKF 位置（[19:16]；`bdtr::bkf`）
+const BDTR_BKF_POS: u32 = 16;
+
+// ---- CR2 (0x04)：输出控制（本驱动保持复位值 0，常量供调用方按需使用；
+// l010/l011 手册 CR2 无 CCDS 位——bit3 保留）----
 /// 互补输出预装载（CCER 写入经预装载寄存器、更新事件生效）
 pub const CR2_CCPC: u32 = 1 << 0;
 /// 互补输出预装载读/写选择（读改写预装载寄存器还是活寄存器）
 pub const CR2_CCUS: u32 = 1 << 2;
 /// 捕获/比较 DMA 选择：0=CCx 事件请求 DMA（本驱动保持 0），1=更新事件
+/// （仅 L012 手册有此位）
 pub const CR2_CCDS: u32 = 1 << 3;
 /// 主模式选择 MMS[6:4]（TRGO 输出源）
 pub const CR2_MMS_POS: u32 = 4;
@@ -195,7 +400,8 @@ pub const OC4M_PWM1: u32 = 6 << OC4M_POS;
 /// OC4 比较预装载使能
 pub const OC4PE: u32 = 1 << 11;
 
-// ---- DIER (0x0C)：中断使能 ----
+// ---- DIER/IER (0x0C)：中断使能（L012 PAC 字段名 dier，l010/l011 名 ier
+// ——位面一致，常量沿用 L012 命名）----
 /// 更新中断使能
 pub const DIER_UIE: u32 = 1 << 0;
 /// CH1 比较/捕获中断使能
@@ -215,7 +421,8 @@ pub const DIER_BIE: u32 = 1 << 7;
 /// 刹车 2（BK2）中断使能
 pub const DIER_B2IE: u32 = 1 << 8;
 
-// ---- ISR (0x10，只读) / ICR (0x70，R1W0) ----
+// ---- ISR (0x10；L012/l011 PAC 类型 RO、l010 标 RW——驱动只读，语义一致)
+// / ICR (0x70，R1W0) ----
 /// CH1 比较/捕获标志
 pub const ISR_CC1IF: u32 = 1 << 1;
 /// CH2 比较/捕获标志
@@ -241,7 +448,8 @@ pub const ISR_CC3OF: u32 = 1 << 11;
 /// CH4 过捕获标志
 pub const ISR_CC4OF: u32 = 1 << 12;
 
-// ---- BDTR (0x44)：PAC 只有 BKF_POS，掩码在此补 ----
+// ---- BDTR (0x44)：滤波/刹车 2 位面补全（L012 PAC 只有 BKF_POS——现为
+// 本地 [`BDTR_BKF_POS`]，掩码在此补）----
 /// 刹车 BRK 数字滤波 BKF[19:16] 掩码
 pub const BDTR_BKF_MASK: u32 = 0xF << 16;
 /// 刹车 2 滤波 BK2F[23:20] 位置（本驱动不用 BK2，位面补全供调用方）
@@ -369,7 +577,7 @@ impl embedded_hal::pwm::Error for AtimError {
 /// [`AtimPwm::enable`] 后才有波形。运行中改占空比经
 /// [`AtimPwm::set_duty_bp`]（OCxPE 预装载 → 下一更新周期生效）。
 pub struct AtimPwm {
-    regs: &'static pac::Atim,
+    regs: &'static AtimRegs,
 }
 
 impl AtimPwm {
@@ -380,8 +588,10 @@ impl AtimPwm {
     /// * `ch1`/`ch1n`..`ch3`/`ch3n` — 主/互补引脚（`(Pin, AF)`；`None` =
     ///   该路不用）。哪路的任一引脚给出就配哪路的输出比较模式与 CCER
     ///   使能位（主脚给 → CCxE、互补脚给 → CCxNE，极性恒高有效）
-    /// * `ch4` — CH4 单端引脚（无互补，CH4N 本驱动不建模）
-    /// * `bk` — 刹车输入引脚（None = 不用硬件刹车，BKE 保持 0）
+    /// * `ch4` — CH4 单端引脚（无互补，CH4N 本驱动不建模；⚠ l010 无
+    ///   CH4 合格引脚路线——PA0 被振荡器占用排除，传 `None`）
+    /// * `bk` — 刹车输入引脚（None = 不用硬件刹车，BKE 保持 0。⚠ l010
+    ///   **必须**传 None——无外部刹车引脚路线，见模块文档刹车节）
     /// * `bk_polarity_high` — 刹车有效极性：false = 低电平有效（BKP=0，
     ///   开漏比较器 + 上拉的常规接法），true = 高电平有效
     /// * `bk_filter` — 刹车数字滤波 BKF（0..=15，越界报
@@ -392,7 +602,7 @@ impl AtimPwm {
     /// 全部纯计算先行（频率/死区/刹车参数校验），通过后才碰硬件。
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        regs: &'static pac::Atim,
+        regs: &'static AtimRegs,
         config: AtimPwmConfig,
         ch1: Option<(Pin<impl GpioPort>, u8)>,
         ch1n: Option<(Pin<impl GpioPort>, u8)>,
@@ -415,17 +625,27 @@ impl AtimPwm {
         if bk_filter > 15 {
             return Err(AtimError::BadBreakConfig);
         }
+        // l010 无任何合格的外部刹车引脚路线（hal2 证据链
+        // atim-complementary-route-evidence.json external_bk_routes=0：
+        // 手册 BK 唯二候选 PA1=OSC_OUT、PA7=SWDIO，分别被振荡器占用与
+        // 调试口保护排除）——刹车只能走内部 VC 源（AF1.BKVC1E/BKVC2E
+        // 路由，本驱动不建模），外部刹车参数必须为 None
+        #[cfg(feature = "cw32l010")]
+        assert!(
+            bk.is_none(),
+            "l010 无外部刹车引脚路线（BK 候选 PA1/PA7 分别被 OSC_OUT/SWDIO 占用排除）——bk 传 None，刹车走内部 VC 源（本驱动不接）"
+        );
         let pclk_hz = crate::PCLK_HZ.load(Ordering::Relaxed);
         let (psc, arr) =
             calc_pwm_psc_arr(pclk_hz, config.freq_hz).ok_or(AtimError::FreqOutOfRange)?;
         let dtg = encode_dtg(pclk_hz, config.dead_time_ns)?;
 
-        // ---- 时钟门控：APBEN1.ATIM = bit5（KEY 写保护，读改写保留其它
-        // 外设使能位——同 timer.rs 配方）----
+        // ---- 时钟门控：APBEN1.ATIM = bit5（KEY 内嵌本寄存器 [31:16]，
+        // 读改写保留其它外设使能位——同 timer.rs 配方）----
         let sysctrl = unsafe { &*(pac::SYSCTRL_BASE as *const crate::Sysctrl) };
         sysctrl
             .apben1
-            .modify(|v| pac::sysctrl::KEY | (v & 0xFFFF) | pac::sysctrl::APBEN1_ATIM);
+            .modify(|v| crate::SYSCTRL_KEY | (v & 0xFFFF) | APBEN1_ATIM);
 
         // ---- 引脚复用 ----
         if let Some((pin, af)) = ch1.as_ref() {
@@ -466,68 +686,61 @@ impl AtimPwm {
         // ---- 输出比较模式：PWM1 + 比较预装载（哪路引脚给了就配哪路；
         // CCxS=00 输出态、极性恒高有效 CCxP/CCxNP=0）----
         if ch1.is_some() || ch1n.is_some() {
-            regs.ccmr1.modify(|v| {
-                (v & !(at::OC1M_MASK | at::OC1MH | at::OC1PE | 0x3)) | at::OC1M_PWM1 | at::OC1PE
-            });
+            ccmr1(regs).modify(|v| (v & !(OC1M_MASK | OC1MH | OC1PE | 0x3)) | OC1M_PWM1 | OC1PE);
             let cc = match ch1n.is_some() {
-                true => at::CC1E | at::CC1NE,
-                false => at::CC1E,
+                true => CC1E | CC1NE,
+                false => CC1E,
             };
             regs.ccer
-                .modify(|v| (v & !(at::CC1E | at::CC1P | at::CC1NE | at::CC1NP)) | cc);
+                .modify(|v| (v & !(CC1E | CC1P | CC1NE | CC1NP)) | cc);
         }
         if ch2.is_some() || ch2n.is_some() {
-            regs.ccmr1.modify(|v| {
-                (v & !(at::OC2M_MASK | at::OC2MH | at::OC2PE | (0x3 << 8)))
-                    | at::OC2M_PWM1
-                    | at::OC2PE
-            });
+            ccmr1(regs)
+                .modify(|v| (v & !(OC2M_MASK | OC2MH | OC2PE | (0x3 << 8))) | OC2M_PWM1 | OC2PE);
             let cc = match ch2n.is_some() {
-                true => at::CC2E | at::CC2NE,
-                false => at::CC2E,
+                true => CC2E | CC2NE,
+                false => CC2E,
             };
             regs.ccer
-                .modify(|v| (v & !(at::CC2E | at::CC2P | at::CC2NE | at::CC2NP)) | cc);
+                .modify(|v| (v & !(CC2E | CC2P | CC2NE | CC2NP)) | cc);
         }
         if ch3.is_some() || ch3n.is_some() {
-            regs.ccmr2
-                .modify(|v| (v & !(OC3M_MASK | OC3MH | OC3PE | 0x3)) | OC3M_PWM1 | OC3PE);
+            ccmr2(regs).modify(|v| (v & !(OC3M_MASK | OC3MH | OC3PE | 0x3)) | OC3M_PWM1 | OC3PE);
             let cc = match ch3n.is_some() {
-                true => at::CC3E | at::CC3NE,
-                false => at::CC3E,
+                true => CC3E | CC3NE,
+                false => CC3E,
             };
             regs.ccer
-                .modify(|v| (v & !(at::CC3E | at::CC3P | at::CC3NE | at::CC3NP)) | cc);
+                .modify(|v| (v & !(CC3E | CC3P | CC3NE | CC3NP)) | cc);
         }
         if ch4.is_some() {
-            regs.ccmr2
+            ccmr2(regs)
                 .modify(|v| (v & !(OC4M_MASK | OC4MH | OC4PE | (0x3 << 8))) | OC4M_PWM1 | OC4PE);
-            regs.ccer
-                .modify(|v| (v & !(at::CC4E | at::CC4P)) | at::CC4E);
+            regs.ccer.modify(|v| (v & !(CC4E | CC4P)) | CC4E);
         }
 
         // ---- BDTR：DTG 死区 + 推荐保守面（OSSI/OSSR=1：空闲与关闭态
         // 输出被驱动到 OIS 电平；OISx=0 全低 = 上/下管全关。LOCK=0 不加
         // 写保护；BK2 全关；DTR2 不碰——DTPE/DTAE 保持 0）----
-        let mut bdtr = at::BDTR_OSSI | at::BDTR_OSSR | dtg;
+        let mut bdtr = BDTR_OSSI | BDTR_OSSR | dtg;
         if bk.is_some() {
-            bdtr |= at::BDTR_BKE;
+            bdtr |= BDTR_BKE;
         }
         if bk_polarity_high {
-            bdtr |= at::BDTR_BKP;
+            bdtr |= BDTR_BKP;
         }
-        bdtr |= (bk_filter as u32 & 0xF) << at::BDTR_BKF_POS;
+        bdtr |= (bk_filter as u32 & 0xF) << BDTR_BKF_POS;
         if config.aoe {
-            bdtr |= at::BDTR_AOE;
+            bdtr |= BDTR_AOE;
         }
         // MOE 不在此置位——司机显式 enable()（刹车活跃时置不上）
         regs.bdtr
-            .modify(|v| (v & !(at::BDTR_DTG_MASK | BDTR_BKF_MASK)) | bdtr);
+            .modify(|v| (v & !(BDTR_DTG_MASK | BDTR_BKF_MASK)) | bdtr);
 
         // UG 重装影子寄存器（URS=0 会置 UIF，wait_update 前置清除处理）
-        regs.egr.write(at::EGR_UG);
+        regs.egr.write(EGR_UG);
         // ARPE=1（ARR 预装载）+ 启动计数（MOE=0 → 输出保持空闲安全态）
-        regs.cr1.write(at::CR1_ARPE | at::CR1_CEN);
+        regs.cr1.write(CR1_ARPE | CR1_CEN);
         Ok(AtimPwm { regs })
     }
 
@@ -566,13 +779,13 @@ impl AtimPwm {
     /// 电平（OISx=0 → 全低）。**刹车活跃时硬件异步清 MOE、写入无效**——
     /// 返回写入后的 MOE 实态（false = 刹车压着，先排除刹车源）。
     pub fn enable(&mut self) -> bool {
-        self.regs.bdtr.modify(|v| v | at::BDTR_MOE);
-        self.regs.bdtr.read() & at::BDTR_MOE != 0
+        self.regs.bdtr.modify(|v| v | BDTR_MOE);
+        self.regs.bdtr.read() & BDTR_MOE != 0
     }
 
     /// 清 MOE（封波：六路输出进 OIS 空闲态全低，计数继续跑）
     pub fn disable(&mut self) {
-        self.regs.bdtr.modify(|v| v & !at::BDTR_MOE);
+        self.regs.bdtr.modify(|v| v & !BDTR_MOE);
     }
 
     /// 是否处于刹车态（ISR.BIF；刹车源活跃期间恒 true）
@@ -594,7 +807,7 @@ impl AtimPwm {
     /// 读回 DTG 死区编码（BDTR.DTG[7:0] 原始位段；含义见
     /// [`decode_dtg`]/[`encode_dtg`]，回读校验用）
     pub fn dtg(&self) -> u8 {
-        (self.regs.bdtr.read() & at::BDTR_DTG_MASK) as u8
+        (self.regs.bdtr.read() & BDTR_DTG_MASK) as u8
     }
 
     /// 读 (PSC, ARR) 配置（回读校验用；注意与 [`crate::timer`] 的
@@ -615,19 +828,19 @@ impl AtimPwm {
     /// 停止计数（保留 PSC/ARR/CCR/BDTR 配置；停了 `wait_update` 不再
     /// 返回——同 GTIM）
     pub fn stop(&mut self) {
-        self.regs.cr1.modify(|v| v & !at::CR1_CEN);
+        self.regs.cr1.modify(|v| v & !CR1_CEN);
     }
 
     /// 恢复计数（保留已配置的时基与输出参数）
     pub fn start(&mut self) {
-        self.regs.cr1.modify(|v| v | at::CR1_CEN);
+        self.regs.cr1.modify(|v| v | CR1_CEN);
     }
 
-    /// 异步等待一次更新事件（PWM 周期节拍；DIER.UIE 单发纪律）
+    /// 异步等待一次更新事件（PWM 周期节拍；IER.UIE 单发纪律）
     ///
     /// 每次调用先清掉残留 UIF（URS=0 下构造路径的 EGR_UG 会置 UIF），
     /// 再等**下一个**真实更新事件——返回时刻即一个 PWM 周期边界。等待
-    /// 期间才开 DIER.UIE，IRQ 唤醒即压掉（防风暴）。
+    /// 期间才开 IER.UIE，IRQ 唤醒即压掉（防风暴）。
     ///
     /// 前置条件（模块文档详述）：ATIM 中断已 `bind_interrupts!` 绑定到
     /// [`AtimIrq`]；NVIC 线由本方法幂等使能。
@@ -635,14 +848,14 @@ impl AtimPwm {
         let regs = self.regs;
         crate::interrupt::nvic_enable::<interrupt::ATIM>();
         // 前置清残留 UIF：R1W0 写"全 1 除 bit0"（其余可清标志写 1 保持）
-        regs.icr.write(icr_clear(at::ISR_UIF));
+        regs.icr.write(icr_clear(ISR_UIF));
         poll_fn(|cx| {
             WAKER_UPDATE.register(cx.waker());
-            if regs.isr.read() & at::ISR_UIF != 0 {
-                regs.dier.modify(|v| v & !DIER_UIE); // 就绪即压掉
+            if regs.isr.read() & ISR_UIF != 0 {
+                ienable(regs).modify(|v| v & !DIER_UIE); // 就绪即压掉
                 Poll::Ready(())
             } else {
-                regs.dier.modify(|v| v | DIER_UIE); // 等待期间才开
+                ienable(regs).modify(|v| v | DIER_UIE); // 等待期间才开
                 Poll::Pending
             }
         })
@@ -653,11 +866,13 @@ impl AtimPwm {
 // ================= 引脚复用 =================
 
 /// PWM 输出引脚（同 `GtimPwm::new` 的 into_af_output 配方：清开漏/
-/// 上下拉/模拟 → AF → DIR=0 输出）
+/// 上下拉/模拟 → AF → DIR=0 输出；l010/l011 无 PDR 下拉寄存器
+/// （gpio.rs impl_port_no_pdr!），清下拉那步仅 L012 需要）
 fn config_output_pin(pin: &Pin<impl GpioPort>, af: u8) {
     let m = pin.mask();
     pin.port().mod_(Reg::OpEndrain, |v| v & !m);
     pin.port().mod_(Reg::Pur, |v| v & !m);
+    #[cfg(feature = "cw32l012")]
     pin.port().mod_(Reg::Pdr, |v| v & !m);
     pin.port().mod_(Reg::Analog, |v| v & !m); // 数字模式
     pin.set_af(af);
@@ -683,30 +898,30 @@ static WAKER_UPDATE: AtomicWaker = AtomicWaker::new();
 static WAKER_COMMUT: AtomicWaker = AtomicWaker::new();
 static WAKER_BREAK: AtomicWaker = AtomicWaker::new();
 
-/// ATIM 中断公共处理：查 UIF/COMIF/BIF，各自压掉对应 DIER 使能位并唤醒
+/// ATIM 中断公共处理：查 UIF/COMIF/BIF，各自压掉对应 IER 使能位并唤醒
 /// （ISR 标志不动——poll 复查后由 wait_update 的前置 ICR 清除，同
 /// timer.rs 纪律；BIF 由 `clear_break`/`is_braked` 软件侧处置）
-fn on_irq(regs: &pac::Atim) {
+fn on_irq(regs: &AtimRegs) {
     let isr = regs.isr.read();
-    if isr & at::ISR_UIF != 0 {
-        regs.dier.modify(|v| v & !DIER_UIE);
+    if isr & ISR_UIF != 0 {
+        ienable(regs).modify(|v| v & !DIER_UIE);
         WAKER_UPDATE.wake();
     }
     if isr & ISR_COMIF != 0 {
-        regs.dier.modify(|v| v & !DIER_COMIE);
+        ienable(regs).modify(|v| v & !DIER_COMIE);
         WAKER_COMMUT.wake();
     }
     if isr & ISR_BIF != 0 {
-        regs.dier.modify(|v| v & !DIER_BIE);
+        ienable(regs).modify(|v| v & !DIER_BIE);
         WAKER_BREAK.wake();
     }
 }
 
-/// ATIM 中断标记（IRQ13，bind_interrupts! 绑定用）
+/// ATIM 中断标记（IRQ13，三家族同号线；bind_interrupts! 绑定用）
 pub struct AtimIrq;
 impl IrqHandler<interrupt::ATIM> for AtimIrq {
     fn call() {
-        on_irq(unsafe { &*(pac::ATIM_BASE as *const pac::Atim) });
+        on_irq(unsafe { &*(pac::ATIM_BASE as *const AtimRegs) });
     }
 }
 
@@ -817,18 +1032,123 @@ mod tests {
     #[test]
     fn icr_clear_word_keeps_other_flags() {
         // ICR 为 R1W0（写 0 清、写 1 保持）：清某标志 = 全 1 除该位，
-        // 与 PAC ICR_CLEAR_UIF 同套路；整字写 0 会误清其它标志
-        let w = icr_clear(at::ISR_UIF);
-        assert_eq!(w, at::ICR_CLEAR_UIF); // 与 PAC 已有常量逐位一致
-        assert_eq!(w & at::ISR_UIF, 0); // 目标位写 0 → 清
+        // 与 L012 PAC ICR_CLEAR_UIF 同套路；整字写 0 会误清其它标志
+        let w = icr_clear(ISR_UIF);
+        // L012 家族锚点：与手写 PAC 已有整字常量逐位一致
+        #[cfg(feature = "cw32l012")]
+        assert_eq!(w, crate::pac::atim::ICR_CLEAR_UIF);
+        assert_eq!(w & ISR_UIF, 0); // 目标位写 0 → 清
         assert_eq!(w & ISR_COMIF, ISR_COMIF); // 其余标志写 1 → 保持
         assert_eq!(w & ISR_BIF, ISR_BIF);
         assert_eq!(w & ISR_CC1OF, ISR_CC1OF);
 
         let w = icr_clear(ISR_BIF);
         assert_eq!(w & ISR_BIF, 0); // 清 BIF
-        assert_eq!(w & at::ISR_UIF, at::ISR_UIF); // UIF 保持
+        assert_eq!(w & ISR_UIF, ISR_UIF); // UIF 保持
         assert_eq!(w & ISR_CC1IF, ISR_CC1IF);
         assert_eq!(w & ISR_CC4OF, ISR_CC4OF);
+    }
+
+    #[test]
+    fn bitplane_matches_l012_pac_whole_word_consts() {
+        // 本地整字常量 ↔ L012 手写 PAC 整字常量逐位一致（l010/l011 的
+        // 小写字段模块位序已在代码注释逐位核对，此处锚定 L012 一侧）
+        #[cfg(feature = "cw32l012")]
+        {
+            use crate::pac::atim as at;
+            assert_eq!(CR1_CEN, at::CR1_CEN);
+            assert_eq!(CR1_ARPE, at::CR1_ARPE);
+            assert_eq!(EGR_UG, at::EGR_UG);
+            assert_eq!(ISR_UIF, at::ISR_UIF);
+            assert_eq!(OC1M_MASK, at::OC1M_MASK);
+            assert_eq!(OC1M_PWM1, at::OC1M_PWM1);
+            assert_eq!(OC1MH, at::OC1MH);
+            assert_eq!(OC1PE, at::OC1PE);
+            assert_eq!(OC2M_MASK, at::OC2M_MASK);
+            assert_eq!(OC2M_PWM1, at::OC2M_PWM1);
+            assert_eq!(OC2MH, at::OC2MH);
+            assert_eq!(OC2PE, at::OC2PE);
+            for (local, pac) in [
+                (CC1E, at::CC1E),
+                (CC1P, at::CC1P),
+                (CC1NE, at::CC1NE),
+                (CC1NP, at::CC1NP),
+                (CC2E, at::CC2E),
+                (CC2P, at::CC2P),
+                (CC2NE, at::CC2NE),
+                (CC2NP, at::CC2NP),
+                (CC3E, at::CC3E),
+                (CC3P, at::CC3P),
+                (CC3NE, at::CC3NE),
+                (CC3NP, at::CC3NP),
+                (CC4E, at::CC4E),
+                (CC4P, at::CC4P),
+            ] {
+                assert_eq!(local, pac);
+            }
+            assert_eq!(BDTR_OSSI, at::BDTR_OSSI);
+            assert_eq!(BDTR_OSSR, at::BDTR_OSSR);
+            assert_eq!(BDTR_BKE, at::BDTR_BKE);
+            assert_eq!(BDTR_BKP, at::BDTR_BKP);
+            assert_eq!(BDTR_AOE, at::BDTR_AOE);
+            assert_eq!(BDTR_MOE, at::BDTR_MOE);
+            assert_eq!(BDTR_DTG_MASK, at::BDTR_DTG_MASK);
+            assert_eq!(BDTR_BKF_POS, at::BDTR_BKF_POS);
+        }
+        // l010/l011 一侧：与生成 PAC 的小写字段模块位序逐位比对
+        #[cfg(feature = "cw32l010")]
+        {
+            use crate::pac::atim as at;
+            assert_eq!(CR1_CEN, 1 << at::cr1::cen_POS);
+            assert_eq!(CR1_ARPE, at::cr1::arpe_MASK);
+            assert_eq!(EGR_UG, at::egr::ug_MASK);
+            assert_eq!(ISR_UIF, at::isr::uif_MASK);
+            assert_eq!(OC1M_MASK, at::ccmr1cmp::oc1m_MASK);
+            assert_eq!(OC1M_PWM1, 6 << at::ccmr1cmp::oc1m_POS);
+            assert_eq!(OC1MH, at::ccmr1cmp::oc1mh_MASK);
+            assert_eq!(OC1PE, at::ccmr1cmp::oc1pe_MASK);
+            assert_eq!(OC2M_MASK, at::ccmr1cmp::oc2m_MASK);
+            assert_eq!(OC2M_PWM1, 6 << at::ccmr1cmp::oc2m_POS);
+            assert_eq!(OC2PE, at::ccmr1cmp::oc2pe_MASK);
+            assert_eq!(CC1E, at::ccer::cc1e_MASK);
+            assert_eq!(CC1P, at::ccer::cc1p_MASK);
+            assert_eq!(CC1NE, at::ccer::cc1ne_MASK);
+            assert_eq!(CC1NP, at::ccer::cc1np_MASK);
+            assert_eq!(CC3E, at::ccer::cc3e_MASK);
+            assert_eq!(CC3NE, at::ccer::cc3ne_MASK);
+            assert_eq!(CC4E, at::ccer::cc4e_MASK);
+            assert_eq!(BDTR_OSSI, at::bdtr::ossi_MASK);
+            assert_eq!(BDTR_OSSR, at::bdtr::ossr_MASK);
+            assert_eq!(BDTR_BKE, at::bdtr::bke_MASK);
+            assert_eq!(BDTR_BKP, at::bdtr::bkp_MASK);
+            assert_eq!(BDTR_AOE, at::bdtr::aoe_MASK);
+            assert_eq!(BDTR_MOE, at::bdtr::moe_MASK);
+            assert_eq!(BDTR_DTG_MASK, at::bdtr::dtg_MASK);
+            assert_eq!(BDTR_BKF_POS, at::bdtr::bkf_POS);
+        }
+        #[cfg(feature = "cw32l011")]
+        {
+            use crate::pac::atim as at;
+            assert_eq!(CR1_CEN, 1 << at::cr1::cen_POS);
+            assert_eq!(CR1_ARPE, at::cr1::arpe_MASK);
+            assert_eq!(ISR_UIF, at::isr::uif_MASK);
+            assert_eq!(OC1M_MASK, at::ccmr1cmp::oc1m_MASK);
+            assert_eq!(OC1PE, at::ccmr1cmp::oc1pe_MASK);
+            assert_eq!(OC1MH, at::ccmr1cmp::oc1mh_MASK);
+            assert_eq!(OC2M_MASK, at::ccmr1cmp::oc2m_MASK);
+            assert_eq!(OC2PE, at::ccmr1cmp::oc2pe_MASK);
+            assert_eq!(CC1E, at::ccer::cc1e_MASK);
+            assert_eq!(CC1NE, at::ccer::cc1ne_MASK);
+            assert_eq!(CC2NP, at::ccer::cc2np_MASK);
+            assert_eq!(CC3P, at::ccer::cc3p_MASK);
+            assert_eq!(BDTR_OSSI, at::bdtr::ossi_MASK);
+            assert_eq!(BDTR_BKE, at::bdtr::bke_MASK);
+            assert_eq!(BDTR_BKP, at::bdtr::bkp_MASK);
+            assert_eq!(BDTR_AOE, at::bdtr::aoe_MASK);
+            assert_eq!(BDTR_MOE, at::bdtr::moe_MASK);
+            assert_eq!(BDTR_DTG_MASK, at::bdtr::dtg_MASK);
+            assert_eq!(BDTR_BKF_POS, at::bdtr::bkf_POS);
+            assert_eq!(EGR_UG, at::egr::ug_MASK);
+        }
     }
 }
