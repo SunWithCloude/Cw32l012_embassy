@@ -2,6 +2,39 @@
 
 遵循 SemVer；格式参考 Keep a Changelog。
 
+## [未发布]
+
+- **经典 ATIM 互补 PWM 接入 l052/l083（f030 同款驱动一套三家族）**：
+  `atim_classic` 从 cfg(cw32f030) 扩为 `any(cw32f030, cw32l052,
+  cw32l083)`，API 与寄存器配方不变。依据（每家族手册级证据，逐条
+  对照后才接入；页码为手册 PDF 0 基页索引，三本手册页脚印刷页与之一致）：
+  - **寄存器面**：三家族 PAC `pac::ATIM` 结构体 20 字段逐字节一致
+    （`dtr@0x30`、`icr@0x14`）、CR/ISR/ICR/FLTR/CHxCR/DTR 位域常量逐位
+    一致、IRQ `ATIM` 同为 13；唯一差异 l052 PAC 的 MSCR `msm@bit4`
+    （l052 手册标 bit4 保留）——驱动 MSCR 恒写 0，两解释行为相同。
+    hal2 证据链指纹：f030/l083 同 `atim_v1`（c68086ae…），l052 单列
+    `atim_cw32l052_v1`（1932ea2a…，即 msm 一位之差）。
+  - **l052**（《CW32L052 UM V1.5》）：互补配方 §16.3.3.5 p305-306；
+    DTR 四段死区 §16.7.9 p333（tick 范围锚点 2~129/130~256/258~506/
+    514~1010 与 f030 p305 逐字一致）；ICR 写 0 清/复位 0x7_FFFF §16.7.5
+    p328；MODE 0b10=边沿对齐/PRS 111=256/PWM2S=1 单点 §16.7.1 p323-324。
+    门控 APBEN2.ATIM=bit7（PAC 位域 + SDK `cw32l052.h:7851` 双源）。
+  - **l083**（《CW32L083 UM V2.0》）：互补配方 §16.3.3.5 p317-318；
+    DTR 四段死区 §16.7.9 p345；ICR §16.7.5 p340；CR §16.7.1 p335-336。
+    门控 APBEN2.ATIM=bit7（PAC 位域 + SDK `cw32l083.h:8425` 双源）。
+  - **引脚（SDK 宏 + 数据手册 AF 表双源一致才收）**：l052 29 条
+    CHxA/B 路线全收（DS V1.3 表 5-3/5-4/5-5，印刷页 30/31/32）；l083
+    45 条 SDK 宏收 44 条——**PE9 拒收**（SDK `PE09_AFx_ATIMCH2A`
+    `cw32l083_gpio.h:2006` 有而 DS V1.9 表 5-7 印刷页 37 的 PE09 行无
+    ATIM_CH2A，单源孤证宁缺毋滥）。全表进 `src/atim_classic.rs` 模块
+    文档；AF 编号按家族/引脚而异（A/B 口主 AF7、C/D/E 口主 AF6），
+    `AtimPair` 的 af 参数按表填。
+  - 示例 `atim_motor_l083`（l083 三相互补 20kHz/500ns 死区，
+    CH1A@PA8+CH1B@PB13、CH2A@PA9+CH2B@PB14、CH3A@PA10+CH3B@PB15 全
+    AF7，PC13 心跳）。
+  - ⚠ **compiles-not-run**（三家族皆然）：thumbv6m 矩阵全绿；波形/
+    死区/刹车路径未上板。上板前勿驱动真电机。
+
 ## [0.5.0] - 2026-11-14
 
 ### 新增
