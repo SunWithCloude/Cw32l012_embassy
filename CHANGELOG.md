@@ -2,23 +2,7 @@
 
 遵循 SemVer；格式参考 Keep a Changelog。
 
-## [0.4.0] - 2026-11-14
-
-### 破坏性变更（0.4.0）
-
-- **依赖全部走 crates.io**（为发布本 crate 铺路）：10 个生成家族 PAC 改为
-  版本依赖并精确钉版（`=0.1.2`），cw32l012-pac 改名 **cw32l012-pac-um**
-  （`=0.3.0`）——crates.io 上 `cw32l012_pac` 已被第三方缺陷版占用。f030 与
-  l010 同因改名 `cw32f030-pac-um`（占用者 cw32-rust）与 `cw32l010-pac-um`
-  （占用者 Lioyae）。`cw32-pacs` 仓 0.1.2 起以新名发布；sibling path 依赖
-  不再需要，本地开发用 `[patch.crates-io]` 指回检出目录。
-- **critical-section：实现保留本 crate 的 PRIMASK 版**（feature
-  `critical-section-impl`，默认开启，restore-state=u8）。家族 PAC 0.1.2
-  的 `Peripherals::take` 是静态 bool 标记、不带任何 critical-section
-  实现，与本实现无冲突；"一个固件只能有一个实现、与 cw32l012-hal 的
-  实现互斥"的警告不变。（评审中曾试过切到 cortex-m 的
-  `critical-section-single-core`，因 restore-state 统一与生态一致性
-  问题未采纳，留档在 wip 分支。）
+## [0.5.0] - 2026-11-14
 
 ### 新增
 
@@ -54,6 +38,50 @@
     接法）；宿主测试 68（L012）/33（l010）/33（l011）全绿。
   - ⚠ **compiles-not-run**：l010/l011 无阻塞版同源背书，实机验证待板；
     上板前勿驱动真电机。
+
+- **l083 DMA 触发源映射全接线（UART×6/SPI×2）**：UART4/5/6 触发源
+  0x2B..0x30、SPI2 0x08/09（均 l083 手册 §8.8.4 请求表，印刷页 147-149）。
+  I2C1/2 经原手册核实**不在 DMA 请求表**（无硬件触发源），维持中断驱动。
+  示例 `uart_dma_l083`。⚠ compiles-not-run。
+
+### 修复
+
+- **全家族 KEY 门控读改写收敛**：lib.rs 的 sysctrl_enable_gpioa/b/c/d、
+  uart L012、adc L012、i2c L012/l010 的整字 `write(KEY|gate)` 全部改为
+  `modify(|v| KEY | v | gate)`——同寄存器其它外设使能位不再被顶掉
+  （l010/l011 侧同款修复的推广；F030 上板实测过整字写会清位）。
+
+### 修复
+
+- **uart（l010/l011）门控整字写顶掉其它外设使能位**：原
+  `apben1.write(SYSCTRL_KEY | (1<<3))` 会清掉同寄存器的 ADC/VC/SPI1/
+  UART2/ATIM/GTIM1/GTIM2 使能位（与 PWM 门控共存时后初始化者顶掉先
+  初始化者的时钟）。改为读改写 `modify(|v| KEY | (v & 0xFFFF) | uart1en)`
+  ——与 timer/atim 驱动同配方。顺带完成任务项的 KEY 协议查证：l010/l011
+  的 SYSCTRL **没有独立 KEY 寄存器**，KEY 内嵌于各受保护寄存器 [31:16]
+  （cw32l011.h:6018-6019 `SYSCTRL_APBEN1_KEY_Pos=16`、cw32l010.h:5662
+  同；PAC SYSCTRL 结构体首字段是 CR0 而非 KEY，独立 KEY@0x00 的是
+  RTC）——原"高位内嵌 KEY"协议本身正确，仅写法从整字写收敛为读改写。
+
+## [0.4.0] - 2026-11-14
+
+### 破坏性变更（0.4.0）
+
+- **依赖全部走 crates.io**（为发布本 crate 铺路）：10 个生成家族 PAC 改为
+  版本依赖并精确钉版（`=0.1.2`），cw32l012-pac 改名 **cw32l012-pac-um**
+  （`=0.3.0`）——crates.io 上 `cw32l012_pac` 已被第三方缺陷版占用。f030 与
+  l010 同因改名 `cw32f030-pac-um`（占用者 cw32-rust）与 `cw32l010-pac-um`
+  （占用者 Lioyae）。`cw32-pacs` 仓 0.1.2 起以新名发布；sibling path 依赖
+  不再需要，本地开发用 `[patch.crates-io]` 指回检出目录。
+- **critical-section：实现保留本 crate 的 PRIMASK 版**（feature
+  `critical-section-impl`，默认开启，restore-state=u8）。家族 PAC 0.1.2
+  的 `Peripherals::take` 是静态 bool 标记、不带任何 critical-section
+  实现，与本实现无冲突；"一个固件只能有一个实现、与 cw32l012-hal 的
+  实现互斥"的警告不变。（评审中曾试过切到 cortex-m 的
+  `critical-section-single-core`，因 restore-state 统一与生态一致性
+  问题未采纳，留档在 wip 分支。）
+
+### 新增
 
 - **ATIM 高级定时器互补 PWM**（`atim` 模块，L012 家族独占，手册 §16；
   三相电机 PWM 路线）：CH1-3 主/互补输出对（死区插入）+ CH4 单端 +
@@ -114,7 +142,7 @@
     （经典分支无 IER，只能动 NVIC 线）。
   - 引脚路线写进各模块文档表（数据手册表 5-3..5-8 摘要；全表见
     cw32-hal2 数据仓库 `af/cw32l083-serial.yaml`）。
-  - **DMA 触发源映射全接线**：l083 UART×6/SPI×2 的 DMA 触发源映射已接——
+  - **DMA 触发源映射**：0.4.0 发布时为防呆 panic，0.5.0 起全接线——
     `cudma::tx_hs/rx_hs` 扩到 idx 0..5：UART1..3=0x00..0x05（全经典组
     请求表同值）、UART4..6=UARTx_TX/RX=0x2B..0x30（**仅 l083 手册表有**，
     l083=CN_V2.0 p147-149），UART2/3 臂从 cfg(f030) 放宽为
@@ -419,18 +447,6 @@
   诚实标注 compiles-not-run：未上板验证波形/死区/刹车路径；死区按标称
   PCLK 向上取整（RCC 无 ClockBounds 包络，不做 ±容差保守包络）。
   示例 `atim_motor_f030`（三相互补+500ns 死区+斜坡，LQFP48/C8T7）。
-
-### 修复
-
-- **uart（l010/l011）门控整字写顶掉其它外设使能位**：原
-  `apben1.write(SYSCTRL_KEY | (1<<3))` 会清掉同寄存器的 ADC/VC/SPI1/
-  UART2/ATIM/GTIM1/GTIM2 使能位（与 PWM 门控共存时后初始化者顶掉先
-  初始化者的时钟）。改为读改写 `modify(|v| KEY | (v & 0xFFFF) | uart1en)`
-  ——与 timer/atim 驱动同配方。顺带完成任务项的 KEY 协议查证：l010/l011
-  的 SYSCTRL **没有独立 KEY 寄存器**，KEY 内嵌于各受保护寄存器 [31:16]
-  （cw32l011.h:6018-6019 `SYSCTRL_APBEN1_KEY_Pos=16`、cw32l010.h:5662
-  同；PAC SYSCTRL 结构体首字段是 CR0 而非 KEY，独立 KEY@0x00 的是
-  RTC）——原"高位内嵌 KEY"协议本身正确，仅写法从整字写收敛为读改写。
 
 ### 变更
 
