@@ -29,8 +29,8 @@
 | `time_driver` | SysTick 时间驱动（embassy-time-driver 0.2 接口）。1MHz tick、动态单次闹钟（`RVR` 重编程），**空闲时无周期性唤醒**，低功耗友好 |
 | `bind_interrupts!` | embassy 风格编译期中断绑定（绑错中断直接编译失败）；驱动构造时自动使能对应 NVIC 线 |
 | `gpio` | 异步 `Input`（`wait_for_rising_edge` / `wait_for_falling_edge` / `wait_for_any_edge` / `wait_for_high` / `wait_for_low`）+ `Output`（含 `embedded-hal` 1.0 trait），全家族；每端口一条共享中断按位唤醒 per-pin waker（l052/l083 的共享向量 `GPIOC_GPIOD` / `GPIOE_GPIOF` 成对派发端口对） |
-| `uart` | 异步 UART（`embedded-io-async`），全家族：逐字节 `Uart` + **`BufferedUart`**（后台环形缓冲收发，embassy-sync `Pipe`，收/发各 64 字节，多任务并发读写，`flush` 等 TC）。L012/F030 有 UART1/2/3，其余家族单 UART1。L012 另有 `write_dma`/`read_dma`（语义级实现，待实板验证）。设计吸收自 cw32-hal2，见 `THIRD_PARTY.md` |
-| `spi` | 异步 SPI 主机（`SpiBus`，软件 CS），全家族：L012 SPI1/2/3、F030 SPI1/2，其余单实例；两代同守 ICR R1W0 纪律。L012 另有 `transfer_dma`/`write_dma`（语义级实现，待实板验证） |
+| `uart` | 异步 UART（`embedded-io-async`），全家族：逐字节 `Uart` + **`BufferedUart`**（后台环形缓冲收发，embassy-sync `Pipe`，收/发各 64 字节，多任务并发读写，`flush` 等 TC）。L012/F030 有 UART1/2/3，**l083 有 UART1..6**（共享向量 UART1/4、UART2/5、UART3/6 成对派发），其余家族单 UART1。L012 另有 `write_dma`/`read_dma`（语义级实现，待实板验证）。设计吸收自 cw32-hal2，见 `THIRD_PARTY.md` |
+| `spi` | 异步 SPI 主机（`SpiBus`，软件 CS），全家族：L012 SPI1/2/3、F030 SPI1/2、**l083 SPI1/2**，其余单实例；两代同守 ICR R1W0 纪律。L012 另有 `transfer_dma`/`write_dma`（语义级实现，待实板验证） |
 | `i2c` | 异步 I2C 主机（`embedded-hal-async::i2c::I2c`），11 家族中覆盖 10 个（L011 无 I2C 硬件）：L012 保留命令 FIFO 式控制器；其余 9 家族为经典 8051 风格状态机控制器，事务单次 START、操作间发重复起始（F030 上板验证，其余经典家族为逐 PAC 位面比对的编译级接入） |
 | `timer` | （L012）GTIM1-4 单通道边沿对齐 PWM（`SetDutyCycle`，万分比 0..=10000 满量程），`wait_update()` 异步等更新事件；纯 PWM 无需绑中断 |
 | `atim` | （L012）ATIM 高级定时器互补 PWM（手册 §16，三相电机 PWM 路线）：CH1-3 主/互补输出对（死区插入）+ CH4 单端 + BK 刹车输入。死区时钟 = PCLK（CKD 固定 /1），DTG 四段编码**向上取整**（绝不取不足值，上限 1008 tick），刹车事件硬件异步清 MOE、刹车源活跃期间 BIF 清不掉。`AtimPwm::new` / `set_duty_bp` / `enable`-`disable` / `is_braked`-`clear_break` / `wait_update`。⚠ compiles-not-run：实机验证待板，上板前勿驱动真电机 |
