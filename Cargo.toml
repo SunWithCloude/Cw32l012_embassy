@@ -254,3 +254,7 @@ required-features = ["rt", "cw32l011"]
 [[example]]
 name = "atim_motor_l083"
 required-features = ["rt", "cw32l083"]
+
+[[example]]
+name = "atim_motor_l031"
+required-features = ["rt", "cw32l031"]

@@ -94,7 +94,22 @@ ATIM 互补+死区+刹车(BDTR=0x94FF)、ADC 序列、RTC、IWDT/WWDT、FLASH �
     `enable` 恢复。**上板前勿接真电机**
   - l010 差异:无外部刹车脚(`bk` 必须 None——BK 候选 PA1/PA7 被振荡器/
     SWDIO 占用排除)、无 CH4/CH4N 路线;GPIO 无 PDR 下拉寄存器
-- l031/l010/l011/f003/l052/r031/w031:`cargo check` 矩阵全绿。
+- **l031/f003/r031/w031 ATIM 已接**（`atim_classic` 五家族一套驱动，
+  A26）：每家族手册级语义核对通过（DTR 四段公式/ICR 写 0 清/MODE/PRS/
+  PWM2S 逐字同 f030 锚点，页码见 atim_classic.rs 家族差异表）；引脚表
+  双源提取（SDK 宏 + DS AF 表），r031/w031 的 SDK 独有路线（封装无脚）
+  宁缺毋滥不列。⏳ **仅编译，compiles-not-run**——四家族无上板数据，
+  首板核对项：
+  - atim_motor_l031（LQFP48/QFN48）：三相互补六路 PA8/PB13、PA9/PB14、
+    PA10/PB15（全 AF7）；`PERIOD`=ARR399/档位0、`DT_TICKS`=4、
+    `DT_CODE`=2、`UPDATES`≈20000/s。**上板前勿接真电机**
+  - f003（TSSOP24 及以上）：主侧 PB6/PC0（CH1A）、PB3/PC1（CH2A）、
+    PA0/PC2（CH3A），互补侧 PA7/PB0/PB5（CH1B）、PA6/PB2/PC4（CH2B）、
+    PA1/PA4/PC3（CH3B），全 AF4；PC3/PC4 仅 TSSOP24 引出
+  - r031/w031：引脚表见 atim_classic.rs（w031 QFN64 无 PA15/PB13/
+    PB03/PB04/PB05/PB06；r031 QFN48 无 PA03）
+- 其余家族其余外设（l010/l011/l031/f003/l052/r031/w031 的非 PWM 项、
+  l052 全部）：`cargo check` 矩阵全绿。
 
 ## 已知问题(复测注意)
 

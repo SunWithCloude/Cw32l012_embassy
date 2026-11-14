@@ -4,6 +4,39 @@
 
 ## [未发布]
 
+### 新增
+
+- **经典 ATIM 三相互补 PWM 接入 f003/l031/r031/w031（五家族一套驱动）**：
+  `atim_classic` 的 `AtimPwm` 从 cfg(cw32f030) 扩为
+  `any(cw32f030, cw32f003, cw32l031, cw32r031, cw32w031)`，API 同名同参。
+  每家族先过**手册级语义核对**才进 cfg 名单，证据页码见
+  src/atim_classic.rs 家族差异表：
+  - **PAC 位面**（crates.io 钉版 0.1.2 逐家复核）：四家族 PAC 与 f030 的
+    ATIM 结构体逐字段同构（20 字段，dtr@0x30）；位常量子模块
+    l031/r031/w031 与 f030 逐常量相同，f003 仅缺三处驱动不触碰的位常量
+    （ch1cr.CDEB/ch4cr.CDE/mscr.CCDS）。APBEN2.ATIM 门控位五家族同在
+    bit7（`pac::sysctrl::apben2::atim_MASK`=0x80，APBRST2 同位互证），
+    中断五家族同为 ATIM=13。
+  - **手册语义逐字一致、无家族分支**：DTR 四段死区公式+范围表锚点
+    （2~129/130~256/258~506/514~1010）在 f003 UM V2.3 印刷页 212/238、
+    l031 UM V1.6 p269/296、r031 UM V1.3 p272/299、w031 UM V1.4 p272/299
+    与 f030 UM V2.5 p278/305 同款；ICR 写 0 清（复位 0x7_FFFF、保留
+    bit1）分别 p233/291/294/294；MODE=10 边沿对齐 + PRS"111：256" +
+    PWM2S=1 单点比较分别 p229/287/290/290；MOE/DTEN（DTR 位 12/9）与
+    CHxCR.BUFEA（bit6）同位。hal2 证据链 register-writes.yaml 的 atim
+    五家互证记录与此一致。
+  - **引脚表双源提取（SDK GPIO 宏 + 数据手册 AF 表）**：f003 全 AF4
+    （15 条路线）、l031 全 AF7（21 条）、r031 全 AF7（20 条）、w031 全
+    AF7（15 条）；手册与 SDK zip 从 whxy.com 下载，sha256 与 hal2 证据链
+    `cw32-data/af/<家族>-atim-pwm.yaml` 逐字节对齐。**宁缺毋滥**：仅
+    SDK 宏有而封装无引脚的路线不列——r031 的 CH3A@PA3（QFN48 无 PA03
+    脚）、w031 的 CH1B@PA15/PB13、CH2A@PB6、CH2B@PB3、CH3B@PB4（QFN64
+    无这些脚）均未列入引脚表（SDK 宏在、DS 表 5-2/5-3/5-4 反证）。
+  - 示例 `atim_motor_l031`（LQFP48/QFN48：CH1A@PA8+CH1B@PB13、
+    CH2A@PA9+CH2B@PB14、CH3A@PA10+CH3B@PB15，全 AF7，20kHz/500ns 死区
+    斜坡；PB12..15 仅 48 脚封装引出）。
+  - ⚠ **compiles-not-run**：四新家族无上板数据（手册级核对 + PAC 位面
+    比对；f030 同款配方经阻塞版同源实测背书）。上板前勿接真电机。
 - **经典 ATIM 互补 PWM 接入 l052/l083（f030 同款驱动一套三家族）**：
   `atim_classic` 从 cfg(cw32f030) 扩为 `any(cw32f030, cw32l052,
   cw32l083)`，API 与寄存器配方不变。依据（每家族手册级证据，逐条
