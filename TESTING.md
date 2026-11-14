@@ -70,8 +70,19 @@ ATIM 互补+死区+刹车(BDTR=0x94FF)、ADC 序列、RTC、IWDT/WWDT、FLASH �
 
 - l083(`cw32l083\):UART×6/SPI×2/I2C×2 多实例布线已落地(`uart_echo_l083`
   示例,共享向量 UART2_UART5 等 ELF 向量槽实测通过)。⏳ 仅编译。
-- l031/l010/l011/f003/l052/r031/w031:`cargo check` 矩阵全绿;
-  l010/l011 的 PWM(GTIM/ATIM 均缺)待接。
+- **l010/l011 PWM 已接**(`cw32l010`/`cw32l011`):GTIM 简单 PWM
+  (`timer_pwm_l010`)与 ATIM 互补 PWM(`atim_motor_l011`)落地,与 L012
+  一套驱动(位面经三家族 PAC 逐位比对 + hal2 证据链核对)。⏳ **仅编译,
+  compiles-not-run**——两家族无阻塞版同源背书,首板核对项:
+  - timer_pwm_l010:GTIM1_CH1@PB6(AF6)1kHz 方波;`PERIOD`=0x0F9F_0000、
+    `UPDATES`≈1000/s、`CNT_MIN/MAX` 铺满 0..3999
+  - atim_motor_l011:三相互补六路(PA8/PA7、PA9/PB0、PA10/PB1,全 AF7)
+    +1µs 死区;`PERIOD` PSC=0/ARR=199、`DTG`=0x04、`UPDATES`≈20000/s;
+    PA0(BK,AF7)拉低 → 六路全灭 + `BRAKES`+1,释放 → `clear_break`+
+    `enable` 恢复。**上板前勿接真电机**
+  - l010 差异:无外部刹车脚(`bk` 必须 None——BK 候选 PA1/PA7 被振荡器/
+    SWDIO 占用排除)、无 CH4/CH4N 路线;GPIO 无 PDR 下拉寄存器
+- l031/l010/l011/f003/l052/r031/w031:`cargo check` 矩阵全绿。
 
 ## 已知问题(复测注意)
 

@@ -22,6 +22,39 @@
 
 ### 新增
 
+- **PWM 接入 l010/l011（L012 代组低配家族）——GTIM 简单 PWM + ATIM 互补
+  PWM，三家族一套驱动**：`timer` 的 `GtimPwm` 与 `atim` 的 `AtimPwm`
+  从 cfg(cw32l012) 扩为 `any(cw32l012, cw32l010, cw32l011)`，API 同名同
+  参。依据：hal2 证据链 `docs/atim-complementary-evidence.json` 的
+  `register_variant` 三家族同为 `cw32l010_v1`（同一套 STM32 风格 IP，
+  基址同为 0x4000_1400），`qualified_subset` 的死区时钟/DTG 编码/刹车
+  语义 l010/l011 与 L012 逐条相同。落地方式：
+  - **位常量本地化**：l010/l011 PAC 是小写字段模块风格
+    （`pac::atim::cr1::cen_POS/cen_MASK`），驱动按 L012 同款命名在
+    embassy 侧定义整字常量（注明对应 PAC 字段模块），三家族共用；新增
+    锚点测试逐位比对三家族 PAC（`gtim_bitplane_matches_family_pacs`/
+    `bitplane_matches_l012_pac_whole_word_consts`）。
+  - **字段名薄适配**：`dier`→`ier`（0x0C）、`ccmr1/ccmr2`→
+    `ccmr1cap/ccmr2cap`（0x18/0x1C，比较位面在 PAC `ccmr1cmp/ccmr2cmp`）
+    经内联访问函数收敛；`isr` l010 PAC 标 RW/l011 标 RO（驱动只读，语义
+    一致）；l010/l011 的 GPIO 无 PDR 下拉寄存器，清下拉那步仅 L012。
+  - **GTIM 实例**：l010 = GTIM1 单实例（IRQ16）、l011 = GTIM1/GTIM2
+    （IRQ16/17 独立）、L012 = GTIM1..4 不变；有独立 PSC 寄存器，与 L012
+    同一线性分频配方（`calc_pwm_psc_arr` 复用）。
+  - **l010 无外部刹车**：hal2 证据链
+    `atim-complementary-route-evidence.json` external_bk_routes=0（手册
+    BK 唯二候选 PA1=OSC_OUT/PA7=SWDIO 被排除）——`AtimPwm::new` 的 bk
+    参数 l010 下必须 None（传 Some 运行时 panic），刹车只能内部 VC 源
+    （AF1.BKVC1E/BKVC2E，本驱动不建模）；l011 有 4 条 BK 路线（PA0/
+    PA6 AF7、PA12/PB5 AF5）。引脚表（SDK 宏 + 数据手册表 5-3/5-4 双源，
+    振荡器/调试口占用路线已排除）进 src/atim.rs 模块文档。
+  - 示例 `timer_pwm_l010`（GTIM1_CH1@PB6 AF6——任务简报的"PB4=CH1 AF7"
+    经证据链复核系 ATIM_CH1@AF7 与 GTIM1_CH3@AF6 的混排，GTIM1_CH1 实为
+    PB6/PA6@AF6）与 `atim_motor_l011`（三相互补 20kHz/1µs 死区，BK 可选
+    接法）；宿主测试 68（L012）/33（l010）/33（l011）全绿。
+  - ⚠ **compiles-not-run**：l010/l011 无阻塞版同源背书，实机验证待板；
+    上板前勿驱动真电机。
+
 - **ATIM 高级定时器互补 PWM**（`atim` 模块，L012 家族独占，手册 §16；
   三相电机 PWM 路线）：CH1-3 主/互补输出对（死区插入）+ CH4 单端 +
   BK 刹车输入。API：`AtimPwm::new`（9 路 `Option<(Pin, AF)>` + 刹车
@@ -378,6 +411,18 @@
   诚实标注 compiles-not-run：未上板验证波形/死区/刹车路径；死区按标称
   PCLK 向上取整（RCC 无 ClockBounds 包络，不做 ±容差保守包络）。
   示例 `atim_motor_f030`（三相互补+500ns 死区+斜坡，LQFP48/C8T7）。
+
+### 修复
+
+- **uart（l010/l011）门控整字写顶掉其它外设使能位**：原
+  `apben1.write(SYSCTRL_KEY | (1<<3))` 会清掉同寄存器的 ADC/VC/SPI1/
+  UART2/ATIM/GTIM1/GTIM2 使能位（与 PWM 门控共存时后初始化者顶掉先
+  初始化者的时钟）。改为读改写 `modify(|v| KEY | (v & 0xFFFF) | uart1en)`
+  ——与 timer/atim 驱动同配方。顺带完成任务项的 KEY 协议查证：l010/l011
+  的 SYSCTRL **没有独立 KEY 寄存器**，KEY 内嵌于各受保护寄存器 [31:16]
+  （cw32l011.h:6018-6019 `SYSCTRL_APBEN1_KEY_Pos=16`、cw32l010.h:5662
+  同；PAC SYSCTRL 结构体首字段是 CR0 而非 KEY，独立 KEY@0x00 的是
+  RTC）——原"高位内嵌 KEY"协议本身正确，仅写法从整字写收敛为读改写。
 
 ### 变更
 
