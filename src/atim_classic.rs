@@ -1,16 +1,51 @@
-//! 经典家族(f030 先行)ATIM 高级定时器：三路互补 PWM + 硬件死区
-//! （`AtimPwm`，`#[cfg(feature = "cw32f030")]`）。
+//! 经典家族（f030/f003/l031/r031/w031）ATIM 高级定时器：三路互补 PWM +
+//! 硬件死区（`AtimPwm`，`#[cfg(any(cw32f030, cw32f003, cw32l031,
+//! cw32r031, cw32w031))]`）。
 //!
-//! 经典 ATIM 与 L012 的 ATIM 是**完全不同的 IP**（寄存器面无一处同构），
-//! 本模块为 f030 一个家族先行落地；l031/l052/l083/r031/w031 的 ATIM 指令
-//! 语义另有出入、f003 是另一变体、f020 无 ATIM——本轮一律不接。
+//! 经典 ATIM 与 L012 的 ATIM 是**完全不同的 IP**（寄存器面无一处同构）。
+//! 本模块覆盖经典代五家族：f030（A22 先行落地）、f003/l031/r031/w031
+//! （A26 扩展——每家族先过**手册级语义核对**才进 cfg 名单，结论见下方
+//! 家族差异表）。l052/l083 的语义核对未做（另行任务）、f020 无 ATIM——
+//! 本轮一律不接。
+//!
+//! # 五家族同构性（PAC 逐家复核，crates.io 钉版 0.1.2）
+//!
+//! 四家族 PAC 与 f030 基线的 `pac::ATIM` 结构体逐字段同构（20 字段
+//! arr/cnt/cr/isr/icr/mscr/fltr/trig/ch1cr..ch4cr + ch1ccra..ch3ccrb +
+//! ch4ccr，基址同 0x4001_2C00，dtr@0x30）；ATIM 全部位常量子模块
+//! （cr/dtr/icr/isr/fltr/ch1cr..ch4cr/mscr/trig/arr/cnt）l031/r031/w031
+//! 与 f030 逐常量相同，f003 仅缺三处驱动不触碰的位常量（ch1cr.CDEB、
+//! ch4cr.CDE、mscr.CCDS——位面仍在，本驱动对 mscr/ch4cr 整字写 0、
+//! ch1cr 只用 BUFEA，不受影响）。APBEN2.ATIM 门控位五家族同在 bit7
+//! （`pac::sysctrl::apben2::atim_MASK`=0x80，APBRST2 同位互证）；
+//! 中断五家族同为 `ATIM = 13`。
+//!
+//! # 家族差异表（每格独立核对各自手册；页码 = 印刷页/PDF 页）
+//!
+//! | 维度 | f030 | f003 | l031 | r031 | w031 |
+//! |---|---|---|---|---|---|
+//! | ATIM 门控（APBEN2.ATIM） | bit7 | 同 | 同 | 同 | 同 |
+//! | IRQ（`AtimIrq` 绑定名） | `ATIM`=13 | 同 | 同 | 同 | 同 |
+//! | 引脚 AF 编号 | 全 AF7 | **全 AF4** | 全 AF7 | 全 AF7 | 全 AF7 |
+//! | DTR 死区四段公式 + 范围表 | UM V2.5 p278/305 | UM V2.3 p212/238 | UM V1.6 p269/296 | UM V1.3 p272/299 | UM V1.4 p272/299 |
+//! | ICR 写 0 清（复位 0x7_FFFF，保留 bit1） | UM V2.5 p300 | UM V2.3 p233 | UM V1.6 p291 | UM V1.3 p294 | UM V1.4 p294 |
+//! | MODE=10 边沿对齐 / PRS"111：256" / PWM2S=1 单点 | UM V2.5 p296 | UM V2.3 p229 | UM V1.6 p287 | UM V1.3 p290 | UM V1.4 p290 |
+//! | 互补配方（COMP=1、OCM=6、MOE/DTEN） | UM V2.5 p277 | UM V2.3 p211 | UM V1.6 p268 | UM V1.3 p271 | UM V1.4 p271 |
+//! | CHxCR.BUFEA（bit6，CCRA 缓存） | PAC 位面同（A22 已核） | UM V2.3 p240 | UM V1.6 p298 | UM V1.3 p301 | UM V1.4 p301 |
+//! | hal2 寄存器语义变体名 | atim_v1 | atim_cw32f003_v1 | atim_v1 | atim_v1 | atim_v1 |
+//!
+//! 结论：五家族 DTR 公式、ICR 语义、MODE/PWM2S 编码、PRS 档位、
+//! MOE/DTEN 位号（DTR 位 12/9）、BUFEA 位号**逐字一致**——共用一套
+//! 驱动本体，无家族分支；家族差异只剩引脚 AF 编号与可用路线（代码不
+//! 分叉，AF 由调用方按引脚表传）。f003 的 `atim_cw32f003_v1` 变体名
+//! 只是 hal2 证据链的转录口径（f003 手册独立成册），语义与 f030 相同。
 //!
 //! # 两代 ATIM IP 差异表
 //!
-//! | 维度 | L012 ATIM（STM32 风格） | 经典 ATIM（本模块，f030） |
+//! | 维度 | L012 ATIM（STM32 风格） | 经典 ATIM（本模块，五家族） |
 //! |---|---|---|
-//! | 寄存器面 | CR1/SMCR/DIER/EGR/CCMR1-3/CCER/PSC/ARR/CCR1-6/BDTR/ICR | **单 CR**/MSCR/FLTR/TRIG/CHxCR/DTR/RCR/CHxCCRA+CCRB（f030 PAC `pac::ATIM`，基址 0x4001_2C00） |
-//! | 分频 | PSC[15:0] 线性 1..=65536 | CR.PRS[6:4] 3bit 档位 **1/2/4/8/16/32/64/256**（无 128 档！手册 PRS 表"111：256"） |
+//! | 寄存器面 | CR1/SMCR/DIER/EGR/CCMR1-3/CCER/PSC/ARR/CCR1-6/BDTR/ICR | **单 CR**/MSCR/FLTR/TRIG/CHxCR/DTR/RCR/CHxCCRA+CCRB（PAC `pac::ATIM`，基址 0x4001_2C00） |
+//! | 分频 | PSC[15:0] 线性 1..=65536 | CR.PRS[6:4] 3bit 档位 **1/2/4/8/16/32/64/256**（无 128 档！五家族手册 PRS 表均"111：256"） |
 //! | 比较寄存器 | CCR1..6 | 每通道 CHxCCRA + CHxCCRB 双缓冲（本驱动只用 CCRA） |
 //! | 互补输出 | CCER.CCxNE + BDTR.DTG | **COMP=1 + PWM2S=1**（CR 位 1/3），B 输出由硬件取 A 反相 + 死区 |
 //! | 死区 | BDTR.DTG 四段编码 | DTR.DTR[7:0] 四段编码（2..1010 TCLK tick，见下） |
@@ -18,9 +53,11 @@
 //! | 更新事件 | EGR.UG（Wo 命令寄存器） | CR.UG（命令位）+ CR.URS（溢出才产生 UEV） |
 //! | 中断标志清除 | ICR（Wo，R1W0） | ICR（RW，**写 0 清除**、写 1 无效、复位 0x7_FFFF） |
 //!
-//! # DTR 死区编码（经典四段，与 L012 BDTR.DTG 不同）
+//! # DTR 死区编码（经典四段，与 L012 BDTR.DTG 不同；五家族手册逐字同锚点）
 //!
-//! TCLK = PCLK / PRS 分频。手册《CW32x030 UM V2.5》p278 公式 + p305 范围表：
+//! TCLK = PCLK / PRS 分频。f030 手册《CW32x030 UM V2.5》p278 公式 +
+//! p305 范围表；f003/l031/r031/w031 各自手册同款锚点（页码见家族差异
+//! 表），四段公式与范围逐字相同：
 //!
 //! | 码段（DTR[7:0]） | 死区（TCLK tick） | 范围 |
 //! |---|---|---|
@@ -30,8 +67,9 @@
 //! | 224..=255（0b111xxxxx） | `(DTR[4:0] + 32) × 16 (+2)` | 514 ~ 1010 |
 //!
 //! 段 2..4 的基数 +2 由手册范围表反推（130 = 2×64+2、258 = 8×32+2、
-//! 514 = 16×32+2，段边界逐值核对吻合）；手册 p278 第四段举例"63.25us"系
-//! 排版误——按公式 514 tick @ 125ns TCLK = 64.25us（与 p305 范围表一致）。
+//! 514 = 16×32+2，段边界逐值核对吻合）；各手册死区举例"63.25us"系
+//! 同一排版误的四处翻版——按公式 514 tick @ 125ns TCLK = 64.25us（与
+//! 各家范围表一致）。
 //! ⚠ 上限 1010 tick：死区请求超出时返回 `AtimError::DeadTimeTooLong`，
 //! 这与 L012 的 DTG 上限不同，用书时注意。
 //!
@@ -41,19 +79,29 @@
 //! 写入落在影子寄存器，更新事件（UEV，本驱动 URS=1 → 仅计数溢出）时装载
 //! 进活动寄存器——与 L012 的 ARPE/OCxPE 语义对齐，改占空比"下一周期生效"，
 //! 不截断当前脉冲。CHxCCRB 不参与互补比较（COMP=1 时 B 输出由硬件取 A 的
-//! 反相 + 死区），初始化写 0 后不再动；每通道的 B 侧预装载位 BUFEB 保持 0。
+//! 反相 + 死区，五家族手册互补配方节同款原文），初始化写 0 后不再动；
+//! 每通道的 B 侧预装载位 BUFEB 保持 0。
 //!
-//! # 引脚表（f030，全部 AF7；数据手册 V1.9 表 5-3/5-4 + SDK 宏双源）
+//! # 引脚表（逐家族一行；SDK GPIO 宏 + 数据手册 AF 表双源一致才列出）
 //!
-//! | 信号 | 引脚 |
-//! |---|---|
-//! | CH1A（主） | PA5、PA8、PB2、PB5 |
-//! | CH1B（互补） | PA7、PA15、PB13 |
-//! | CH2A（主） | PA4、PA9、PB6、PB10 |
-//! | CH2B（互补） | PB0、PB3、PB14 |
-//! | CH3A（主） | PA3、PA10、PB7、PB11 |
-//! | CH3B（互补） | PB1、PB4、PB15 |
-//! | CH4 | 内部通道，无引出引脚、无互补——本驱动不暴露 |
+//! | 家族 | AF | CH1A（主） | CH1B（互补） | CH2A（主） | CH2B（互补） | CH3A（主） | CH3B（互补） | 未列出路线 |
+//! |---|---|---|---|---|---|---|---|---|
+//! | f030 | 7 | PA5、PA8、PB2、PB5 | PA7、PA15、PB13 | PA4、PA9、PB6、PB10 | PB0、PB3、PB14 | PA3、PA10、PB7、PB11 | PB1、PB4、PB15 | — |
+//! | f003 | 4 | PB6、PC0 | PA7、PB0、PB5 | PB3、PC1 | PA6、PB2、PC4 | PA0、PC2 | PA1、PA4、PC3 | —（PC3/PC4 仅 TSSOP24 封装引出，DS 表 5-2） |
+//! | l031 | 7 | PA5、PA8、PB2、PB5 | PA7、PA15、PB13 | PA4、PA9、PB6、PB10 | PB0、PB3、PB14 | PA3、PA10、PB7、PB11 | PB1、PB4、PB15 | —（PB12..15 仅 LQFP48/QFN48；PB0/PB3/PB4/PB5 不在 QFN20/TSSOP20，DS 表 5-2） |
+//! | r031 | 7 | PA5、PA8、PB2、PB5 | PA7、PA15、PB13 | PA4、PA9、PB6、PB10 | PB0、PB3、PB14 | PA10、PB7、PB11 | PB1、PB4、PB15 | CH3A@PA3：SDK 宏在而 QFN48 封装无 PA03 引脚（DS 表 5-2/5-3 反证）——**未获双源确认，不列** |
+//! | w031 | 7 | PA5、PA8、PB2 | PA7 | PA4、PA9、PB10 | PB0、PB14 | PA3、PA10、PB7、PB11 | PB1、PB15 | CH1B@PA15/PB13、CH2A@PB6、CH2B@PB3、CH3B@PB4：SDK 宏在而 QFN64 封装无这些引脚（DS 表 5-2/5-4 反证）——**未获双源确认，不列** |
+//!
+//! 双源出处：SDK GPIO 宏（`cw32f003_gpio.h`/`cw32l031_gpio.h`/
+//! `cw32r031_gpio.h`/`cw32w031_gpio.h`，行号与 zip sha256 见 A26 报告；
+//! zip hash 与 hal2 证据链 `cw32-data/af/<家族>-atim-pwm.yaml` 逐字节
+//! 对齐）+ 数据手册 AF 表（f003 DS V1.9 表 5-3/5-4/5-5 印刷页 24、PDF
+//! 25；l031 DS V1.9 表 5-3/5-4 印刷页 28/29、PDF 29/30；r031 DS V1.2
+//! 表 5-3/5-4 印刷页 31/32、PDF 32/33；w031 DS V1.3 表 5-3/5-4 印刷页
+//! 30/31、PDF 31/32——"功能 N"列号即 AF 编号）。f030 沿用 A22 的
+//! DS V1.9 表 5-3/5-4 + SDK 宏双源。封装可用性按各家 DS 表 5-2 逐脚
+//! 核对。**宁缺毋滥**：仅 SDK 宏有而封装无引脚的路线一律不列（上表
+//! "未列出路线"列）。
 //!
 //! # 安全边界（诚实标注，全部照实）
 //!
@@ -73,11 +121,12 @@
 //!
 //! # 状态
 //!
-//! **compiles-not-run**：thumbv6m 全 feature 矩阵（clippy/build/test）全绿；
-//! 三相互补波形、死区宽度、刹车标志路径均**未上板验证**。硬件语义
-//! （CR/FLTR/CHxCR/DTR 配方、UG 装载序列、ICR 写 0 清）对照厂商手册
-//! 《CW32x030 UM V2.5》p277/278/296/300/305 与同仓 MIT 的 qualified 实现
-//! 核对（只取手册硬件语义，实现为本仓 whole-register 风格）。
+//! **compiles-not-run**：五家族 thumbv6m 全 feature 矩阵（clippy/build/
+//! test）全绿；三相互补波形、死区宽度、刹车标志路径均**未上板验证**。
+//! 硬件语义（CR/FLTR/CHxCR/DTR 配方、UG 装载序列、ICR 写 0 清）对照
+//! 各家族厂商手册逐家核对（f030：《CW32x030 UM V2.5》p277/278/296/
+//! 300/305；f003/l031/r031/w031 页码见家族差异表——只取手册硬件语义，
+//! 实现为本仓 whole-register 风格）。
 //!
 //! # 用法（f030，CH1A@PA8 + CH1B@PB13，全部 AF7）
 //!
@@ -96,6 +145,9 @@
 //! pwm.set_duty_bp(AtimChannel::Ch1, 5_000)?; // 影子写入，下一 UEV 生效
 //! pwm.wait_update().await;                    // 周期节拍（IRQ13）
 //! ```
+//!
+//! l031 三相互补完整示例见 `examples/atim_motor_l031.rs`（引脚取上表
+//! l031 行，LQFP48/QFN48 封装）。
 
 // ================= 纯数学核心（家族无关：默认 cargo test 直接覆盖） =================
 //
@@ -109,6 +161,8 @@
 /// 段 1 `DTR[6:0]+2`（2..129）；段 2 `(DTR[5:0]+64)×2+2`（130..256）；
 /// 段 3 `(DTR[4:0]+32)×8+2`（258..506）；段 4 `(DTR[4:0]+32)×16+2`
 /// （514..1010）。编码 0 即 2 tick（DTEN 使能时的最小死区）。
+/// f003/l031/r031/w031 手册同款四段公式/范围（页码见模块头家族差异
+/// 表），五家族共用本函数。
 pub fn dead_time_ticks(code: u8) -> u32 {
     2 + match code {
         0..=127 => u32::from(code),
@@ -338,10 +392,16 @@ mod calc_tests {
     }
 }
 
-// ================= f030 驱动本体（feature = "cw32f030"） =================
+// ================= 驱动本体（五家族共用：位面/门控/语义逐家族核对一致） =================
 
-#[cfg(feature = "cw32f030")]
-mod f030 {
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f003",
+    feature = "cw32l031",
+    feature = "cw32r031",
+    feature = "cw32w031",
+))]
+mod classic {
     use core::future::poll_fn;
     use core::sync::atomic::Ordering;
     use core::task::Poll;
@@ -501,7 +561,8 @@ mod f030 {
         }
     }
 
-    /// 一对同通道互补引脚（CHxA 主 + CHxB 互补；f030 全部 AF7）。
+    /// 一对同通道互补引脚（CHxA 主 + CHxB 互补；AF 按家族引脚表：
+    /// f030/l031/r031/w031 全 AF7、f003 全 AF4，见模块文档引脚表）。
     ///
     /// 构造即接管引脚：`AtimPwm::new` 内部配为 AF 复用输出（清模拟/开漏/
     /// 上下拉、DIR=输出、set_af）。引脚接错通道编译期不查（本仓 gpio 是
@@ -509,11 +570,11 @@ mod f030 {
     pub struct AtimPair<P: GpioPort, Q: GpioPort> {
         /// 主输出引脚（CHxA）
         pub main: Pin<P>,
-        /// 主输出 AF 编号（f030 ATIM 全部为 7）
+        /// 主输出 AF 编号（按家族引脚表：f003=4，其余家族=7）
         pub main_af: u8,
         /// 互补输出引脚（CHxB）
         pub comp: Pin<Q>,
-        /// 互补输出 AF 编号（f030 ATIM 全部为 7）
+        /// 互补输出 AF 编号（按家族引脚表：f003=4，其余家族=7）
         pub comp_af: u8,
     }
 
@@ -543,7 +604,7 @@ mod f030 {
 
     // ================= 驱动本体 =================
 
-    /// 经典 ATIM 三相互补 PWM（whole-ATIM 独占所有者，f030 单实例）
+    /// 经典 ATIM 三相互补 PWM（whole-ATIM 独占所有者，五家族每家单实例）
     ///
     /// 构造即完成门控/分频/ARR/死区/输出模式并**启动计数**，但
     /// **DTR.MOE=0（无输出）**——三对引脚已接 AF，输出使能须显式
@@ -560,7 +621,7 @@ mod f030 {
     impl AtimPwm {
         /// 初始化 ATIM 并启动计数（输出默认关，MOE=0）
         ///
-        /// * `regs` — ATIM 寄存器块（`p.atim`；f030 单实例）
+        /// * `regs` — ATIM 寄存器块（`p.atim`；五家族均单实例）
         /// * `ch1`/`ch2`/`ch3` — 三对互补引脚，缺哪对传 `None`
         ///   （封装没有对应引脚或用不到；至少要一对）
         /// * `config` — 频率/死区/初始占空比
@@ -599,7 +660,8 @@ mod f030 {
             };
 
             // 时钟门控：经典代无 KEY，读改写。ATIM 门位 = APBEN2 bit7
-            //（f030 PAC pac::sysctrl::apben2::atim_MASK，APBRST2 同位互证）
+            //（五家族 PAC 同位：pac::sysctrl::apben2::atim_MASK=0x80，
+            // APBRST2 同位互证——五家族 PAC apbrst2::atim 亦 bit7）
             let sysctrl = unsafe { &*(pac::SYSCTRL_BASE as *const crate::Sysctrl) };
             sysctrl
                 .apben2
@@ -810,7 +872,7 @@ mod f030 {
 
     // ================= 中断派发 =================
 
-    /// UEV waker（f030 单实例）
+    /// UEV waker（五家族每家单实例）
     static ATIM_WAKER: AtomicWaker = AtomicWaker::new();
 
     /// ATIM 更新中断标记（IRQ13，bind_interrupts! 绑定用）
@@ -833,7 +895,7 @@ mod f030 {
         }
     }
 
-    // ================= 寄存器字构造 host 测试（feature = cw32f030 时跑） =================
+    // ================= 寄存器字构造 host 测试（任一经典家族 feature 下跑） =================
 
     #[cfg(test)]
     mod word_tests {
@@ -886,5 +948,11 @@ mod f030 {
     }
 }
 
-#[cfg(feature = "cw32f030")]
-pub use f030::*;
+#[cfg(any(
+    feature = "cw32f030",
+    feature = "cw32f003",
+    feature = "cw32l031",
+    feature = "cw32r031",
+    feature = "cw32w031",
+))]
+pub use classic::*;
