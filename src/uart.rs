@@ -53,9 +53,11 @@
 //! `UART_ReceiveDMA`/`UART_DMACmd`（cw32l012_uart.c/.h；f030 同名
 //! `USART_DMACmd`）的位面与次序编写，**语义级实现待实板验证**。
 //!
-//! l083 范围：`write_dma`/`read_dma` 本轮仅 UART1 接线；UART2..6 的构造
-//! 与 IRQ 布线已就绪，但 DMA 触发源映射（厂商头 `DMA_HardTrig_UARTx_*`
-//! 对应值）待后续接线——对 UART2..6 调 DMA 方法会显式 panic。
+//! l083 范围：`write_dma`/`read_dma` 六实例全接线（UART1..6）——触发源
+//! 按手册 §8.8.4 请求表：UART1..3 取 0x00..0x05（全经典组同值）、UART4..6
+//! 取 0x2B..0x30（**仅 l083 手册表有 UART4-6 行**，l083=CN_V2.0 p147-149），
+//! 与 [`crate::dma::hs::UART4_RX`] 等常量一一对应；UART2/3 实例仅 f030/l083
+//! 有（其余经典家族单实例只走 UART1），调用 `new_uart2..6` 构造即用。
 
 use core::future::poll_fn;
 use core::task::Poll;
@@ -1259,28 +1261,47 @@ mod cudma {
 
     /// 发送方向硬件触发源（§8.8.4 / 厂商库 DMA_HardTrig_UARTx_TXBufferE）。
     ///
-    /// UART2/3 触发源接线仅 f030（多实例 DMA 路线已接）；l083 的 UART2..6
-    /// 触发源映射**待后续接线**（本轮仅 UART1，越界显式 panic 防静默错触发）。
+    /// 全经典组 l083 六实例 + f030 三实例**全部接线**（idx 由 `instance_of`
+    /// 按寄存器基址产生，不会越界）：UART1..3 取
+    /// UARTx_TX=0x01/03/05（全经典组请求表同值），UART4..6 取
+    /// UART4_TX..UART6_TX=0x2C/2E/30（仅 l083 手册表有，l083=CN_V2.0
+    /// p147-149），与 [`crate::dma::hs`] 常量一一对应。`_` 分支是结构性
+    /// 兜底——单实例家族（f020/l031/l052/r031/w031）`instance_of` 只产 0。
     pub fn tx_hs(idx: usize) -> u8 {
         match idx {
             0 => crate::dma::hs::UART1_TX,
-            #[cfg(feature = "cw32f030")]
+            #[cfg(any(feature = "cw32f030", feature = "cw32l083"))]
             1 => crate::dma::hs::UART2_TX,
-            #[cfg(feature = "cw32f030")]
+            #[cfg(any(feature = "cw32f030", feature = "cw32l083"))]
             2 => crate::dma::hs::UART3_TX,
-            _ => panic!("该实例的 DMA 触发源未接线（l083 UART2..6 待后续,本轮仅 UART1）"),
+            #[cfg(feature = "cw32l083")]
+            3 => crate::dma::hs::UART4_TX,
+            #[cfg(feature = "cw32l083")]
+            4 => crate::dma::hs::UART5_TX,
+            #[cfg(feature = "cw32l083")]
+            5 => crate::dma::hs::UART6_TX,
+            _ => unreachable!("UART 实例号超出本家族实例数（instance_of 只产 0..N-1）"),
         }
     }
 
     /// 接收方向硬件触发源（§8.8.4 / 厂商库 DMA_HardTrig_UARTx_RXBufferNE）
+    ///
+    /// 接线范围同 [`tx_hs`]：UART1..3=0x00/02/04、UART4..6=0x2B/2D/2F
+    /// （仅 l083 手册表有）。
     pub fn rx_hs(idx: usize) -> u8 {
         match idx {
             0 => crate::dma::hs::UART1_RX,
-            #[cfg(feature = "cw32f030")]
+            #[cfg(any(feature = "cw32f030", feature = "cw32l083"))]
             1 => crate::dma::hs::UART2_RX,
-            #[cfg(feature = "cw32f030")]
+            #[cfg(any(feature = "cw32f030", feature = "cw32l083"))]
             2 => crate::dma::hs::UART3_RX,
-            _ => panic!("该实例的 DMA 触发源未接线（l083 UART2..6 待后续,本轮仅 UART1）"),
+            #[cfg(feature = "cw32l083")]
+            3 => crate::dma::hs::UART4_RX,
+            #[cfg(feature = "cw32l083")]
+            4 => crate::dma::hs::UART5_RX,
+            #[cfg(feature = "cw32l083")]
+            5 => crate::dma::hs::UART6_RX,
+            _ => unreachable!("UART 实例号超出本家族实例数（instance_of 只产 0..N-1）"),
         }
     }
 }
@@ -1309,8 +1330,8 @@ impl Uart {
     ///
     /// **与逐字节/Buffered 模式互斥**（见模块文档）；空缓冲或 >65535
     /// 字节返回 [`crate::dma::DmaErrorClassic::BadLength`]。⚠ 语义级实现
-    /// 待实板验证。l083：本轮仅 UART1 接线（UART2..6 触发源映射待后续，
-    /// 其余实例调用会 panic——见模块文档 DMA 节）。
+    /// 待实板验证。l083：UART1..6 全接线（触发源 UART1_TX..UART6_TX，
+    /// §8.8.4 请求表，见模块文档 DMA 节）。
     pub async fn write_dma(
         &mut self,
         dma: &mut crate::dma::ClassicDma,
@@ -1347,8 +1368,8 @@ impl Uart {
     ///
     /// **与逐字节/Buffered 模式互斥**（见模块文档）；空缓冲或 >65535
     /// 字节返回 [`crate::dma::DmaErrorClassic::BadLength`]。⚠ 语义级实现
-    /// 待实板验证。l083：本轮仅 UART1 接线（UART2..6 触发源映射待后续，
-    /// 其余实例调用会 panic——见模块文档 DMA 节）。
+    /// 待实板验证。l083：UART1..6 全接线（触发源 UART1_RX..UART6_RX，
+    /// §8.8.4 请求表，见模块文档 DMA 节）。
     pub async fn read_dma(
         &mut self,
         dma: &mut crate::dma::ClassicDma,
