@@ -66,10 +66,12 @@ ATIM 互补+死区+刹车(BDTR=0x94FF)、ADC 序列、RTC、IWDT/WWDT、FLASH �
 | rtc_alarm_f030 / wdt_demo_f030 | ACCESS/WINDOW 访问窗版 RTC;IWDT 复位循环 |
 | **atim_motor_f030** | PWM2S 三相:CH1A@PA08+CH1B@PB13、CH2A@PA09+CH2B@PB14、CH3A@PA10+CH3B@PB15(LQFP48/C8T7);死区 500ns;DTR 编码回读。**经典 ATIM 是独立 IP(MSCR/DTR/CHxCCRA+B),驱动 compiles-not-run,先逻辑分析仪后电机** |
 
-### 其它家族(编译矩阵覆盖,无示例)
+### 其它家族
 
-l031/l010/l011/f003/l052/l083/r031/w031:`cargo check` 矩阵全绿;
-l083 多实例布线(UART2..6/SPI2/I2C2)落地后补 `uart_echo_l083`。
+- l083(`cw32l083\):UART×6/SPI×2/I2C×2 多实例布线已落地(`uart_echo_l083`
+  示例,共享向量 UART2_UART5 等 ELF 向量槽实测通过)。⏳ 仅编译。
+- l031/l010/l011/f003/l052/r031/w031:`cargo check` 矩阵全绿;
+  l010/l011 的 PWM(GTIM/ATIM 均缺)待接。
 
 ## 已知问题(复测注意)
 
