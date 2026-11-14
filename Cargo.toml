@@ -1,6 +1,6 @@
 [package]
 name = "embassy-cw32"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.85"
 description = "embassy async HAL for CW32 Cortex-M0+ MCUs (Wuhan Xinyuan / CMSemicon): L012/L010/L011 and the classic F003/F020/F030(A030)/L031/L052/L083/R031/W031 families"
