@@ -97,6 +97,8 @@
 //! embassy_cw32::bind_interrupts!(struct Irqs {
 //!     ATIM => embassy_cw32::atim::AtimIrq;
 //! });
+//! // 不用的通道传 None：APIT 端口类型无法从 None 推断，需显式标注
+//! let no_pin: Option<(Pin<embassy_cw32::Gpio>, u8)> = None;
 //! let mut pwm = AtimPwm::new(
 //!     p.atim,
 //!     AtimPwmConfig { freq_hz: 20_000, dead_time_ns: 1_000, aoe: false },
@@ -106,7 +108,7 @@
 //!     Some((Pin::new(p.gpiob, 0), 7)),  // CH2N = PB0  AF7
 //!     Some((Pin::new(p.gpioa, 10), 7)), // CH3  = PA10 AF7
 //!     Some((Pin::new(p.gpiob, 1), 7)),  // CH3N = PB1  AF7
-//!     None,                             // CH4 单端，本例不用
+//!     no_pin,                           // CH4 单端，本例不用
 //!     Some((Pin::new(p.gpioa, 6), 7)),  // BK = PA6 AF7
 //!     false, 0,                         // BKP=0 低有效 / BKF=0 无滤波
 //!     Irqs,
@@ -587,6 +589,12 @@ impl AtimPwm {
     pub fn clear_break(&self) -> bool {
         self.regs.icr.write(icr_clear(ISR_BIF));
         self.regs.isr.read() & ISR_BIF == 0
+    }
+
+    /// 读回 DTG 死区编码（BDTR.DTG[7:0] 原始位段；含义见
+    /// [`decode_dtg`]/[`encode_dtg`]，回读校验用）
+    pub fn dtg(&self) -> u8 {
+        (self.regs.bdtr.read() & at::BDTR_DTG_MASK) as u8
     }
 
     /// 读 (PSC, ARR) 配置（回读校验用；注意与 [`crate::timer`] 的

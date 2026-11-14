@@ -139,6 +139,10 @@ name = "timer_pwm"
 required-features = ["rt", "cw32l012"]
 
 [[example]]
+name = "atim_motor"
+required-features = ["rt", "cw32l012"]
+
+[[example]]
 name = "rtt_hello"
 required-features = ["rt", "cw32l012"]
 
