@@ -22,6 +22,34 @@
 
 ### 新增
 
+- **ATIM 高级定时器互补 PWM**（`atim` 模块，L012 家族独占，手册 §16；
+  三相电机 PWM 路线）：CH1-3 主/互补输出对（死区插入）+ CH4 单端 +
+  BK 刹车输入。API：`AtimPwm::new`（9 路 `Option<(Pin, AF)>` + 刹车
+  极性/滤波 + `bind_interrupts!` 绑定证明；不用的通道传 `None` 需显式
+  标注端口类型——嵌套 APIT 推断限制）、`set_duty_bp(ch 1..=4, 万分比)`、
+  `enable()`（置 MOE，返回写入后实态——刹车活跃时硬件异步清 MOE、置
+  不上）/`disable()`（封波）、`is_braked()`/`clear_break()`（刹车源
+  活跃时 BIF 清不掉、返回 false）、`stop()`/`start()`、`dtg()`/
+  `period_config()` 回读、`wait_update()`（UIF 周期节拍，DIER.UIE 单发
+  纪律同 GTIM；`AtimIrq` 防御性压 COMIF/BIE）；错误 `AtimError`
+  （FreqOutOfRange/BadDuty/DeadTimeTooLong/BadBreakConfig，实现
+  `embedded_hal::pwm::Error`）。关键语义三源核对（本仓 PAC `pac::atim`
+  位面 + 手册 §16 + fan2nd/cw32-hal2 `docs/atim-complementary-evidence.json`
+  证据链，MIT）：死区时钟 = f_DTS = PCLK（CKD 固定 /1，死区不走 PSC）、
+  DTG 四段编码最大 1008 tick（`dead_time_ns` **向上取整**、绝不饱和到
+  不足值，`encode_dtg`/`decode_dtg` 助手）、推荐保守面（OSSI/OSSR=1 +
+  OIS\*=0 + 高有效 + LOCK=0 + BK2/DTR2 不碰）、ICR 为 R1W0（清标志写
+  "全 1 除该位"，不能整字写 0）。PAC 缺失的位常量（CR2 的 CCPC/CCUS/
+  CCDS/MMS/OIS\*、CCMR2 的 OC3/OC4 面、DIER/ISR 全套、BDTR.BKF/BK2F）
+  本地补齐并注明 §16。引脚表（数据手册 V1.0 表 5-3，SDK 双源验证）进
+  模块文档；刹车输入脚 GPIO 配方与输出脚分离（DIR=1 输入、保留调用方
+  上下拉、不清开漏）。示例 `atim_motor`（三相互补 20kHz/1µs 死区 +
+  120° 占空比斜坡 + 刹车监控/显式恢复 + BK 开漏比较器接线图）。
+  8 项新宿主测试（DTG 四段边界/穷举最小向上取整/256 编码回环/上限/
+  ns 换算/ICR 清位字），45 项不减、clippy -D warnings 干净。
+  ⚠ **compiles-not-run**：实机验证待板，上板前勿驱动真电机（模块文档
+  含诚实的安全边界声明：不做电机安全、不做故障闩锁承诺、死区不构成
+  防直通保证）。
 - **FLASH 自编程**（`flash` 模块，L012 先行——经典家族 FLASH 是另一套
   IP，本轮未做，模块头注已注明）：片上 FLASH 读 / 页擦除 / 编程，
   参数存储与校准数据落盘的底层。API：`Flash::new(p.flashctrl)`（自动开

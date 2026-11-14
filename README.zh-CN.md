@@ -33,6 +33,7 @@
 | `spi` | 异步 SPI 主机（`SpiBus`，软件 CS），全家族：L012 SPI1/2/3、F030 SPI1/2，其余单实例；两代同守 ICR R1W0 纪律。L012 另有 `transfer_dma`/`write_dma`（语义级实现，待实板验证） |
 | `i2c` | 异步 I2C 主机（`embedded-hal-async::i2c::I2c`），11 家族中覆盖 10 个（L011 无 I2C 硬件）：L012 保留命令 FIFO 式控制器；其余 9 家族为经典 8051 风格状态机控制器，事务单次 START、操作间发重复起始（F030 上板验证，其余经典家族为逐 PAC 位面比对的编译级接入） |
 | `timer` | （L012）GTIM1-4 单通道边沿对齐 PWM（`SetDutyCycle`，万分比 0..=10000 满量程），`wait_update()` 异步等更新事件；纯 PWM 无需绑中断 |
+| `atim` | （L012）ATIM 高级定时器互补 PWM（手册 §16，三相电机 PWM 路线）：CH1-3 主/互补输出对（死区插入）+ CH4 单端 + BK 刹车输入。死区时钟 = PCLK（CKD 固定 /1），DTG 四段编码**向上取整**（绝不取不足值，上限 1008 tick），刹车事件硬件异步清 MOE、刹车源活跃期间 BIF 清不掉。`AtimPwm::new` / `set_duty_bp` / `enable`-`disable` / `is_braked`-`clear_break` / `wait_update`。⚠ compiles-not-run：实机验证待板，上板前勿驱动真电机 |
 | `adc` | 一个模块、两套 IP：L012 ADC1/2 异步单次/序列转换，含内部通道（经 1.2V 基准的 `vdda_mv()`、`temperature_mc()`）与 `read_sequence_dma()`；经典组（F030/F020，完全不同的 IP）独立实现——异步单次/4 结果序列，内部通道 VDDA/3 + 温度 + 1.2V 基准，软件触发路径 |
 | `rtc` | （L012）BCD 日历读写（`now`/`set_datetime`）+ 异步闹钟（`wait_alarm`，KEY 解锁序列包进临界区），LSE/LSI 时基 |
 | `wdt` | （L012）IWDT 独立看门狗 + WWDGT 窗口看门狗，非异步薄封装，带喂狗窗口求解器（`WindowConfig::for_feed_interval`） |
@@ -41,9 +42,9 @@
 | `critical-section-impl` | PRIMASK 实现（默认开启；全固件唯一——家族 PAC 自身不带实现） |
 | `defmt` | 可选 feature：驱动错误/配置类型（30+）derive `defmt::Format`；`rtt_hello` 示例打通 defmt-rtt 端到端日志 |
 
-`examples/` 下有 20 个可运行示例（blink、UART echo/缓冲/DMA、SPI 回环/DMA、I2C 扫描、
+`examples/` 下有 33 个可运行示例（blink、UART echo/缓冲/DMA、SPI 回环/DMA、I2C 扫描、
 ADC 异步/DMA/F030、DAC 波形与 DAC→ADC 回环、RTC 闹钟、看门狗、两代 DMA mem2mem、
-定时器 PWM、RTT hello），各自按家族 feature 门控（见 `Cargo.toml`）。
+定时器 PWM、ATIM 三相互补电机 PWM、RTT hello），各自按家族 feature 门控（见 `Cargo.toml`）。
 
 ## 快速开始
 
