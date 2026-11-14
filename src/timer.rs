@@ -765,8 +765,12 @@ mod classic {
         /// 占空比 → CCR + 终态 CCxM（0%/100% 走强制电平：CCR 只有 16bit，
         /// ARR=0xFFFF 时周期 65536 无法用 CCR 表达满占空）
         fn apply_duty(&self, duty_bp: u16) {
-            let arr = self.regs.arr.read() & 0xFFFF;
-            let period = arr as u32 + 1;
+            // l012 PAC 的 arr.read() 返回 u16、l083 返回 u32——`as u32` 在
+            // 前者是必要转换、后者是冗余 cast,单实现无法同时满足两侧的
+            // clippy::unnecessary_cast,按家族中立写法 + 局部 allow
+            #[allow(clippy::unnecessary_cast)]
+            let arr = (self.regs.arr.read() & 0xFFFF) as u32;
+            let period = arr + 1;
             let ticks = period * duty_bp as u32 / 10_000; // 0..=period
             let mode = if duty_bp == 0 {
                 CCXM_FORCE_LOW
@@ -808,8 +812,9 @@ mod classic {
             if mode == CCXM_FORCE_HIGH {
                 return 10_000;
             }
-            let arr = self.regs.arr.read() & 0xFFFF;
-            ((self.ccr() * 10_000) / (arr as u32 + 1)) as u16
+            #[allow(clippy::unnecessary_cast)] // 同 apply_duty:两族 arr 类型不同
+            let arr = (self.regs.arr.read() & 0xFFFF) as u32;
+            ((self.ccr() * 10_000) / (arr + 1)) as u16
         }
 
         /// 当前计数值（观测 CNT 在 0..ARR 间滚动 = PWM 在跑）

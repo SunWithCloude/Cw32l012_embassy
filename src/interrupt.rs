@@ -47,6 +47,9 @@ pub trait IrqHandler<INT: interrupt::Interrupt> {
 /// 见模块文档。注意：一个中断在一套 [`Binding`] 里只能出现一次；
 /// SPI2/3 共享 `SPI23` 中断（`Spi2Irq` 与 `Spi3Irq` 都实现
 /// [`IrqHandler<SPI23>`](IrqHandler)，共享向量会依次派发）。
+/// l083 的 UART 同理两两共享向量：`UART1_UART4`/`UART2_UART5`/
+/// `UART3_UART6` 各由一个标记类型（`Uart1Uart4Irq` 等）依次派发组内
+/// 两个实例。
 #[macro_export]
 macro_rules! bind_interrupts {
     (struct $name:ident { $($irq:ident => $handler:ty;)* }) => {
