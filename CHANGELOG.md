@@ -12,11 +12,13 @@
   l010 同因改名 `cw32f030-pac-um`（占用者 cw32-rust）与 `cw32l010-pac-um`
   （占用者 Lioyae）。`cw32-pacs` 仓 0.1.2 起以新名发布；sibling path 依赖
   不再需要，本地开发用 `[patch.crates-io]` 指回检出目录。
-- **critical-section 实现改由 cortex-m 提供**（`critical-section-single-core`
-  feature，随依赖自动带上）：删除本 crate 的 `critical-section-impl`
-  feature（PRIMASK 手写版）。与已发布 PAC/生态标准一致；restore-state
-  统一 u32。一个固件仍只能有一个实现——与 cw32l012-hal 的实现互斥的
-  警告不变。
+- **critical-section：实现保留本 crate 的 PRIMASK 版**（feature
+  `critical-section-impl`，默认开启，restore-state=u8）。家族 PAC 0.1.2
+  的 `Peripherals::take` 是静态 bool 标记、不带任何 critical-section
+  实现，与本实现无冲突；"一个固件只能有一个实现、与 cw32l012-hal 的
+  实现互斥"的警告不变。（评审中曾试过切到 cortex-m 的
+  `critical-section-single-core`，因 restore-state 统一与生态一致性
+  问题未采纳，留档在 wip 分支。）
 
 ### 新增
 

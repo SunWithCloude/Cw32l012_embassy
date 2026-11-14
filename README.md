@@ -30,7 +30,7 @@ Two hardware generations: the **L012 generation** (`cw32l010`/`cw32l011`/`cw32l0
 | `wdt` | two generations: L012 `Iwdt`/`Wwdgt`; classic `ClassicIwdt`/`ClassicWwdgt` (F003/F020/F030/L031/L052/L083/R031/W031) — same key sequence and bit plane, but the vendor library requires start-before-config for IWDT (0xCCCC → unlock → CR/ARR → sync wait → 0xAAAA feed), the dedicated RC10K counts at a nominal 10 kHz per the vendor macro (datasheet electrical table says typical 8 kHz, 4–12 kHz over temperature), and gates live in APBEN1 without a key. Non-async thin wrappers with a feed-window solver (`WindowConfig::for_feed_interval` / `ClassicWindowConfig::for_feed_interval`) |
 | `dac` | (L012) dual-channel 12-bit output (`set_ch1`/`set_ch2`/`set_both` + readback) with DMA waveform output — one-shot `write_dma` and `start_dma_loop`/`stop_dma` ring mode (GTIM TRGO as trigger); DAC→ADC internal loopback example included |
 | `dma` | two generations: L012 `Dma` — 4 channels (IRQ9 `DMA12` = ch1/2, IRQ10 `DMA34` = ch3/4) with `mem_to_mem`/`periph_to_mem`/`mem_to_periph`; classic `ClassicDma` (F020/F030/L031/L052/L083/R031/W031) — 5 channels on F030/F020/L083, 4 on the L031 group, **no DMA hardware on F003/L010/L011** (F020 channels 4/5 have no NVIC line, polling only). Hardware trigger source tables (`pac::dma::hs`) per generation |
-| critical-section | provided by cortex-m's `critical-section-single-core`, pulled in automatically (one implementation per firmware) |
+| `critical-section-impl` | PRIMASK implementation (on by default; one per firmware — the family PACs ship none) |
 | `defmt` | optional feature: driver error/config types (30+) derive `defmt::Format`; the `rtt_hello` example wires defmt-rtt end to end |
 
 Twenty-nine runnable examples live in `examples/` (blink, UART echo/buffered/DMA, SPI loopback/DMA, I2C scan, ADC async/DMA/F030, DAC wave and DAC→ADC loop, RTC alarm and WDT demo on both the L012 and F030 generations, DMA mem2mem on both generations, timer PWM, RTT hello), each gated by its family feature in `Cargo.toml`.
@@ -160,8 +160,8 @@ Two parallel options, pick one:
 | Vector table | built in (`UART1_irq`, …) | cortex-m-rt + PAC `rt` (`UART1`, …) |
 
 ⚠ Do **not** enable two critical-section implementations in one firmware —
-e.g. `cw32l012-hal/critical-section-impl` next to the cortex-m one this crate
-pulls in by default; the link will fail.
+e.g. `cw32l012-hal/critical-section-impl` next to this crate's default; the
+link will fail.
 
 ## Verification status
 

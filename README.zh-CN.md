@@ -38,7 +38,7 @@
 | `wdt` | （L012）IWDT 独立看门狗 + WWDGT 窗口看门狗，非异步薄封装，带喂狗窗口求解器（`WindowConfig::for_feed_interval`） |
 | `dac` | （L012）双通道 12 位输出（`set_ch1`/`set_ch2`/`set_both` + 回读），DMA 波形输出——单发 `write_dma` 与 `start_dma_loop`/`stop_dma` 环形循环（GTIM TRGO 供拍）；含 DAC→ADC 片内回环示例 |
 | `dma` | 两代 IP：L012 `Dma`——4 通道（IRQ9 `DMA12` = 通道 1/2、IRQ10 `DMA34` = 通道 3/4），`mem_to_mem`/`periph_to_mem`/`mem_to_periph`；经典组 `ClassicDma`（F020/F030/L031/L052/L083/R031/W031）——F030/F020/L083 5 通道、L031 组 4 通道，**F003/L010/L011 无 DMA 硬件**（F020 通道 4/5 无 NVIC 线，仅轮询）。两代各配硬件触发源表（`pac::dma::hs`） |
-| critical-section | 实现由 cortex-m 的 `critical-section-single-core` 提供（随本 crate 自动带上；全固件唯一） |
+| `critical-section-impl` | PRIMASK 实现（默认开启；全固件唯一——家族 PAC 自身不带实现） |
 | `defmt` | 可选 feature：驱动错误/配置类型（30+）derive `defmt::Format`；`rtt_hello` 示例打通 defmt-rtt 端到端日志 |
 
 `examples/` 下有 20 个可运行示例（blink、UART echo/缓冲/DMA、SPI 回环/DMA、I2C 扫描、
@@ -159,8 +159,7 @@ embassy-time 语义安全）。`now()` 带单调钳制（`LAST_NOW`），消除�
 | 向量表 | 自带（符号 `UART1_irq` 等） | cortex-m-rt + PAC `rt`（符号 `UART1` 等） |
 
 ⚠ **不要在一个固件里启用两个 critical-section 实现**——例如
-`cw32l012-hal/critical-section-impl` 与本 crate 默认拉入的 cortex-m 实现，
-链接会冲突。
+`cw32l012-hal/critical-section-impl` 与本 crate 默认实现，链接会冲突。
 
 ## 验证状态
 
